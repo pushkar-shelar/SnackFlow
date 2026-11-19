@@ -348,3 +348,39 @@ Stateless API and worker scale horizontally behind a load balancer; sessions liv
 ## 16. Known gaps (to state honestly in README)
 
 Partial dispatch/returns limited to full-line credit notes; no real IRP/GSTN calls (mocked); abnormal-loss accounting not separated; no supplier payables ageing; single currency.
+
+---
+
+## 17. Database hosting (Neon Serverless Postgres)
+
+SnackFlow implements a cloud-hosted serverless database architecture via **Neon Serverless PostgreSQL** for live demo deployments and ephemeral CI validation, while retaining standard local Docker PostgreSQL (`postgres:16-alpine`) for offline developer and evaluator environments.
+
+### 17.1 Single System of Record & Connection Topology
+Neon is the sole system of record; no NoSQL, MongoDB, or dual-write architecture is utilized.
+1. **Runtime Pooled Connection (`DATABASE_URL`):** Connects through Neon's PgBouncer transaction-mode connection pooler (`-pooler` hostname) with `sslmode=require`, utilizing the `app_runtime` database role. Supports transactional writes, row-level locks (`SELECT ... FOR UPDATE`), and soft reservations.
+2. **Direct Migration Connection (`DIRECT_URL`):** Connects directly to the compute endpoint using the project owner role for Prisma schema migrations (`prisma migrate deploy`) and master seeding (`prisma db seed`).
+3. **Read-Only / Replica Connection (`READONLY_DATABASE_URL` / `READ_REPLICA_URL`):** Connects through the read pooler using the `app_readonly` role, dedicated to reports, dashboards, and auditor views via `PrismaReadService`.
+
+### 17.2 Least-Privilege Role Matrix (Defence in Depth)
+- **`owner`:** Full DDL and administrative privileges; used strictly via `DIRECT_URL` during build/deploy.
+- **`app_runtime`:** Standard operational DML (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) on business documents. Crucially, `UPDATE` and `DELETE` privileges are explicitly revoked from `stock_ledger` and `audit_log`, providing a secondary database privilege barrier alongside the PostgreSQL trigger `trg_stock_ledger_append_only`.
+- **`app_readonly`:** Strict `SELECT`-only privileges across all tables and views; zero mutating permissions.
+
+### 17.3 Branching Strategy for Demo & CI
+- **`seed-baseline` Branch:** Contains pre-migrated schema and baseline Section 5 master data.
+- **`main` Branch:** Hosted live deployment for production showcase.
+- **`evaluator` Branch:** Public demo playground branched from `seed-baseline`. Can be cleanly reset anytime via `pnpm demo:reset`.
+- **`ci/<run_id>` Ephemeral Branches:** Isolated copy-on-write branches provisioned automatically during GitHub Actions CI runs and destroyed immediately upon job completion.
+
+### 17.4 Resilience & Scale-to-Zero Handling
+Neon compute instances scale to zero when idle. To absorb the initial 1-3 second wake-up latency:
+- `DB_CONNECT_TIMEOUT_S` defaults to 15 seconds.
+- Startup connection implements bounded exponential retry (up to 3 attempts: 2s, 4s, 8s).
+- `/health/ready` executes concurrent ping queries with timeout against both `PrismaService` and `PrismaReadService`.
+
+### 17.5 Architectural Justification: Why Not MongoDB?
+MongoDB was evaluated and explicitly rejected for the following mission-critical domain reasons:
+1. **Append-Only Ledger Triggers:** PostgreSQL provides declarative row-level triggers (`BEFORE UPDATE OR DELETE`) that guarantee ledger immutability even against arbitrary ORM queries or database clients. MongoDB lacks declarative row-level immutability triggers.
+2. **Fixed-Point Decimal Arithmetic:** Indian GST and cost accounting mandate exact paise and 4-6 decimal place quantity/cost precision (`NUMERIC(14,2)`, `NUMERIC(14,4)`, `NUMERIC(14,6)`). Standard MongoDB drivers rely heavily on IEEE-754 floating-point numbers unless cumbersome Decimal128 wrappers are used.
+3. **Cross-Document ACID & Row Locks:** SnackFlow requires strict pessimistic row locking (`SELECT ... FOR UPDATE`) during order dispatch to eliminate inventory double-spending. MongoDB multi-document transactions incur substantial coordinator overhead under concurrent contention.
+4. **Relational Tax & Ledger Reporting:** Statutory reports (GSTR-1, GSTR-3B, Stock Summary, FIFO/WAC cost sensitivity) require complex relational aggregation, foreign key constraints, and window functions that are native and optimal in PostgreSQL.
