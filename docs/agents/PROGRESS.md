@@ -22,3 +22,14 @@
 | 2026-11-20T01:06:00+05:30 | T2.4 | Lead / UI | 8a68bc2 | Executive Owner Dashboard implemented with KPI cards (Sales, Margin 37.7%, Yield -6.0%, Collections), Ind AS 2 WAC vs FIFO sensitivity table, and debtor ageing. |
 | 2026-11-20T01:06:00+05:30 | T2.5 | Lead / QA | 8a68bc2 | Section 14 Benchmark Test Suite implemented (test/benchmark.spec.ts), verifying all 15 figures from ARCHITECTURE.md §14. 15/15 PASS. |
 | 2026-11-20T01:06:00+05:30 | Gate 2 | Lead | 8a68bc2 | Gate 2 Verified: 100% of Section 14 metrics match exact specifications. pnpm benchmark and pnpm verify clean. |
+| 2026-11-20T01:19:35+05:30 | Neon-1 | Lead | f56005e | Added environment contract with Zod validation and directUrl support in schema.prisma and .env.example. |
+| 2026-11-20T01:21:02+05:30 | Neon-2 | Lead | 217d992 | Configured least-privilege PostgreSQL roles (app_runtime, app_readonly). Integration test least-privilege.spec.ts passing. |
+| 2026-11-20T01:22:45+05:30 | Neon-3 | Lead | b71b331 | Implemented dual Prisma providers: pooled runtime PrismaService and read-only PrismaReadService with bounded retry. |
+| 2026-11-20T01:23:22+05:30 | Neon-4 | Lead | 49ca32b | Added safe migration, seed, and local reset scripts (db:migrate, db:seed, db:reset:local). |
+| 2026-11-20T01:24:14+05:30 | Neon-5 | Lead | cec6405 | Verified Asia/Kolkata timezone and FY boundary correctness on cloud DB (31 March 23:30 IST vs 1 April 00:30 IST). |
+| 2026-11-20T01:24:42+05:30 | Neon-6 | Lead | 03fcae5 | Implemented health and ready checks (/health, /health/live, /health/ready) with timeout on primary and replica DBs. |
+| 2026-11-20T01:25:26+05:30 | Neon-7,8 | Lead | bad6196 | Added CI Neon branching workflow (.github/workflows/ci.yml) and demo:reset utility (scripts/demo-reset.ts). |
+| 2026-11-20T01:26:09+05:30 | Neon-9 | Lead | 19e738a | Added ARCHITECTURE.md §17 Database Hosting (Neon) and ADR 001 (docs/adr/001-neon-postgres.md). |
+| 2026-11-20T01:32:31+05:30 | T3.1-T3.5 | Lead | 6a97095 | Implemented §10 reports engine, Excel/CSV exports, BullMQ background worker (main.worker.ts), and variance/reorder alerts. 8/8 tests green. |
+| 2026-11-20T01:34:12+05:30 | T3.6 | Lead | e123fa7 | Connected live report downloads and web export streaming to Auditor Reports Hub (/audit). |
+| 2026-11-20T01:35:48+05:30 | Phase 3 Gate | Lead | 03a7d60 | Phase 3 complete: pnpm verify (9/9 tasks across @snackflow/*) and pnpm benchmark (15/15 checks) passing 100%. |
