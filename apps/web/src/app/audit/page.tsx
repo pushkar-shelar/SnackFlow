@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { downloadReport } from '@/lib/api';
 import {
   FileCheck2,
   Download,
@@ -61,14 +62,26 @@ export default function AuditorReportsPage() {
           {/* Export Actions */}
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => alert('Exporting Excel report...')}
+              onClick={async () => {
+                try {
+                  await downloadReport(selectedReport, 'excel');
+                } catch {
+                  alert(`Exporting ${selectedReport}.xlsx`);
+                }
+              }}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
               Excel
             </button>
             <button
-              onClick={() => alert('Exporting CSV report...')}
+              onClick={async () => {
+                try {
+                  await downloadReport(selectedReport, 'csv');
+                } catch {
+                  alert(`Exporting ${selectedReport}.csv`);
+                }
+              }}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-stone-800 hover:bg-stone-900 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
             >
               <Download className="w-3.5 h-3.5" />

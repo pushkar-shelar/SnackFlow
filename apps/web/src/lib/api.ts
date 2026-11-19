@@ -92,3 +92,27 @@ export async function apiFetch<T = any>(
 
   return res.json();
 }
+
+export async function downloadReport(reportType: string, format: 'excel' | 'csv'): Promise<void> {
+  const session = getStoredSession();
+  const url = `${API_BASE_URL}/reports/export/${reportType}?format=${format}`;
+  const res = await fetch(url, {
+    headers: {
+      ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error('Export download failed');
+  }
+
+  const blob = await res.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = `${reportType}.${format === 'excel' ? 'xlsx' : 'csv'}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(downloadUrl);
+}
