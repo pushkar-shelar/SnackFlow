@@ -1,4 +1,9 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { getStoredSession } from '@/lib/api';
 import {
   ShoppingBag,
   Inbox,
@@ -10,9 +15,29 @@ import {
   ArrowRight,
   Database,
   Lock,
+  Loader2,
 } from 'lucide-react';
 
 export default function HomePage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    const current = getStoredSession();
+    if (!current) {
+      router.replace('/login');
+    } else {
+      setLoading(false);
+    }
+  }, [router]);
+
+  if (loading) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-amber-600" />
+      </div>
+    );
+  }
   const roles = [
     {
       title: 'Salesman Mobile PWA',

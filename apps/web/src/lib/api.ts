@@ -10,11 +10,11 @@ export interface UserSession {
 }
 
 export const SEEDED_ACCOUNTS = [
-  { role: 'SALESMAN', name: 'Ramu S (Sales)', email: 'salesman@snackflow.com' },
-  { role: 'ADMIN', name: 'Kavitha N (Admin)', email: 'admin@snackflow.com' },
-  { role: 'PRODUCTION', name: 'Muthu K (Plant Supervisor)', email: 'production@snackflow.com' },
-  { role: 'AUDITOR', name: 'Sankaran & Co (Statutory Auditor)', email: 'auditor@snackflow.com' },
-  { role: 'OWNER', name: 'S. Murugesan (Managing Director)', email: 'owner@snackflow.com' },
+  { role: 'SALESMAN', name: 'Karthik (Salesman)', email: 'salesman@snackflow.local', path: '/sales', description: 'Field sales orders, offline mobile PWA' },
+  { role: 'ADMIN', name: 'Meenakshi (Admin)', email: 'admin@snackflow.local', path: '/admin/orders', description: 'Order approval, invoicing & dispatch' },
+  { role: 'PRODUCTION', name: 'Raman (Supervisor)', email: 'production@snackflow.local', path: '/production', description: 'Batch execution, yield & variance wizard' },
+  { role: 'AUDITOR', name: 'Sundaram & Co (Auditor)', email: 'auditor@snackflow.local', path: '/audit', description: 'Statutory compliance & stock ledger drill-down' },
+  { role: 'OWNER', name: 'Annamalai (Owner)', email: 'owner@snackflow.local', path: '/owner', description: 'Executive margin control & P&L sensitivity' },
 ] as const;
 
 export function getStoredSession(): UserSession | null {
@@ -37,16 +37,16 @@ export function setStoredSession(session: UserSession | null): void {
   }
 }
 
-export async function loginAs(email: string): Promise<UserSession> {
+export async function login(email: string, password: string = 'Password123!'): Promise<UserSession> {
   const res = await fetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'Password@123' }),
+    body: JSON.stringify({ email: email.trim(), password }),
   });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || err.message || 'Login failed');
+    throw new Error(err.detail || err.title || err.message || 'Invalid email or password');
   }
 
   const data = await res.json();
@@ -61,6 +61,12 @@ export async function loginAs(email: string): Promise<UserSession> {
 
   setStoredSession(session);
   return session;
+}
+
+export const loginAs = (email: string) => login(email, 'Password123!');
+
+export function logout(): void {
+  setStoredSession(null);
 }
 
 export async function apiFetch<T = any>(

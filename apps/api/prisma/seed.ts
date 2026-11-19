@@ -33,6 +33,11 @@ async function main() {
     { email: 'production@snackflow.local', name: 'Raman (Production Supervisor)', role: Role.PRODUCTION },
     { email: 'auditor@snackflow.local', name: 'Sundaram & Co (Auditor)', role: Role.AUDITOR },
     { email: 'owner@snackflow.local', name: 'Annamalai (Owner)', role: Role.OWNER },
+    { email: 'salesman@snackflow.com', name: 'Karthik (Salesman)', role: Role.SALESMAN },
+    { email: 'admin@snackflow.com', name: 'Meenakshi (Admin)', role: Role.ADMIN },
+    { email: 'production@snackflow.com', name: 'Raman (Production Supervisor)', role: Role.PRODUCTION },
+    { email: 'auditor@snackflow.com', name: 'Sundaram & Co (Auditor)', role: Role.AUDITOR },
+    { email: 'owner@snackflow.com', name: 'Annamalai (Owner)', role: Role.OWNER },
   ];
 
   const createdUsers: Record<string, any> = {};

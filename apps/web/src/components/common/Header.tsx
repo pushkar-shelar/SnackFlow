@@ -6,7 +6,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   SEEDED_ACCOUNTS,
   getStoredSession,
-  loginAs,
+  login,
+  logout,
   UserSession,
 } from '@/lib/api';
 import { db } from '@/lib/db';
@@ -21,6 +22,7 @@ import {
   WifiOff,
   UserCheck,
   ChevronDown,
+  LogOut,
 } from 'lucide-react';
 
 export function Header() {
@@ -39,14 +41,23 @@ export function Header() {
   );
 
   useEffect(() => {
-    // Initial session
+    const isPublic = pathname === '/login' || pathname.startsWith('/public');
     const current = getStoredSession();
-    if (current) {
-      setSession(current);
-    } else {
-      // Default to salesman on initial load
-      loginAs('salesman@snackflow.com').then(setSession).catch(console.error);
+    setSession(current);
+
+    // If unauthenticated and trying to access a protected route, redirect to /login
+    if (!current && !isPublic) {
+      router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
+
+    const syncSession = () => {
+      const s = getStoredSession();
+      setSession(s);
+      if (!s && !isPublic) {
+        router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
+      }
+    };
+    window.addEventListener('storage', syncSession);
 
     // Monitor online/offline events
     const handleOnline = () => setIsOnline(true);
@@ -56,15 +67,16 @@ export function Header() {
     setIsOnline(navigator.onLine);
 
     return () => {
+      window.removeEventListener('storage', syncSession);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [pathname, router]);
 
   const handleRoleChange = async (email: string, targetPath: string) => {
     setIsSwitching(true);
     try {
-      const newSession = await loginAs(email);
+      const newSession = await login(email, 'Password123!');
       setSession(newSession);
       router.push(targetPath);
     } catch (e: any) {
@@ -74,13 +86,59 @@ export function Header() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    setSession(null);
+    router.push('/login');
+  };
+
   const navItems = [
-    { label: 'Salesman (PWA)', path: '/sales', icon: ShoppingBag, role: 'SALESMAN', email: 'salesman@snackflow.com' },
-    { label: 'Admin Inbox', path: '/admin/orders', icon: Inbox, role: 'ADMIN', email: 'admin@snackflow.com' },
-    { label: 'Production Wizard', path: '/production', icon: Factory, role: 'PRODUCTION', email: 'production@snackflow.com' },
-    { label: 'Auditor Reports', path: '/audit', icon: FileCheck2, role: 'AUDITOR', email: 'auditor@snackflow.com' },
-    { label: 'Owner Insights', path: '/owner', icon: PieChart, role: 'OWNER', email: 'owner@snackflow.com' },
+    { label: 'Salesman (PWA)', path: '/sales', icon: ShoppingBag, role: 'SALESMAN', email: 'salesman@snackflow.local' },
+    { label: 'Admin Inbox', path: '/admin/orders', icon: Inbox, role: 'ADMIN', email: 'admin@snackflow.local' },
+    { label: 'Production Wizard', path: '/production', icon: Factory, role: 'PRODUCTION', email: 'production@snackflow.local' },
+    { label: 'Auditor Reports', path: '/audit', icon: FileCheck2, role: 'AUDITOR', email: 'auditor@snackflow.local' },
+    { label: 'Owner Insights', path: '/owner', icon: PieChart, role: 'OWNER', email: 'owner@snackflow.local' },
   ];
+
+  // If on login page, display clean minimal header
+  if (pathname === '/login') {
+    return (
+      <header className="sticky top-0 z-50 border-b border-amber-950/10 bg-white/95 backdrop-blur-md shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <Link href="/" className="flex items-center gap-2.5 group">
+              <div className="w-10 h-10 rounded-xl bg-amber-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-amber-600/20">
+                மு
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-stone-900 tracking-tight text-lg">SnackFlow</span>
+                  <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded uppercase tracking-wider">NIT-T CDI</span>
+                </div>
+                <p className="text-xs text-stone-500 font-medium">Sri Murugan Snacks • மதுரை</p>
+              </div>
+            </Link>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const newLang = currentLang === 'ta' ? 'en' : 'ta';
+                  setCurrentLang(newLang);
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('snackflow_lang', newLang);
+                  }
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100 transition-colors shadow-2xs"
+                title="Toggle Tamil / English (மொழி மாற்றம்)"
+              >
+                <span>{currentLang === 'ta' ? 'தமிழ்' : 'English'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header className="sticky top-0 z-50 border-b border-amber-950/10 bg-white/95 backdrop-blur-md shadow-xs">
@@ -161,43 +219,66 @@ export function Header() {
               )}
             </div>
 
-            {/* Active User Pill */}
-            <div className="relative group">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200/70 border border-stone-200/80 text-xs font-medium text-stone-800 cursor-pointer">
-                <UserCheck className="w-3.5 h-3.5 text-amber-600" />
-                <span className="hidden sm:inline font-semibold">{session?.name || 'Logging in...'}</span>
-                <span className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                  {session?.role || '...'}
-                </span>
-                <ChevronDown className="w-3 h-3 text-stone-400" />
-              </div>
+            {/* Active User Pill with Dropdown */}
+            {session ? (
+              <div className="relative group">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200/70 border border-stone-200/80 text-xs font-medium text-stone-800 cursor-pointer transition">
+                  <UserCheck className="w-3.5 h-3.5 text-amber-600" />
+                  <span className="hidden sm:inline font-semibold">{session.name}</span>
+                  <span className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                    {session.role}
+                  </span>
+                  <ChevronDown className="w-3 h-3 text-stone-400" />
+                </div>
 
-              {/* Dropdown for role switching */}
-              <div className="absolute right-0 mt-1 w-64 bg-white border border-stone-200 rounded-xl shadow-lg p-1.5 hidden group-hover:block z-50">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-1">
-                  Switch User Role
-                </p>
-                {SEEDED_ACCOUNTS.map((acc) => (
+                {/* Dropdown for role switching & logout */}
+                <div className="absolute right-0 mt-1 w-64 bg-white border border-stone-200 rounded-xl shadow-lg p-1.5 hidden group-hover:block z-50">
+                  <div className="px-2 py-1.5 border-b border-stone-100 mb-1">
+                    <p className="text-[11px] font-bold text-stone-900">{session.name}</p>
+                    <p className="text-[10px] text-stone-500">{session.email}</p>
+                  </div>
+
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-1">
+                    Switch User Account
+                  </p>
+                  {SEEDED_ACCOUNTS.map((acc) => (
+                    <button
+                      key={acc.email}
+                      disabled={isSwitching}
+                      onClick={() => {
+                        const target = navItems.find((n) => n.role === acc.role)?.path || '/';
+                        handleRoleChange(acc.email, target);
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between hover:bg-amber-50 transition-colors ${
+                        session.email === acc.email ? 'bg-amber-50/80 font-bold text-amber-900' : 'text-stone-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-medium">{acc.name}</div>
+                        <div className="text-[10px] text-stone-400">{acc.email}</div>
+                      </div>
+                      <span className="text-[10px] font-semibold text-stone-500">{acc.role}</span>
+                    </button>
+                  ))}
+
+                  <div className="my-1 border-t border-stone-100" />
                   <button
-                    key={acc.email}
-                    disabled={isSwitching}
-                    onClick={() => {
-                      const target = navItems.find((n) => n.role === acc.role)?.path || '/';
-                      handleRoleChange(acc.email, target);
-                    }}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between hover:bg-amber-50 transition-colors ${
-                      session?.email === acc.email ? 'bg-amber-50/80 font-bold text-amber-900' : 'text-stone-700'
-                    }`}
+                    onClick={handleLogout}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 text-rose-600 hover:bg-rose-50 font-semibold transition-colors"
                   >
-                    <div>
-                      <div className="font-medium">{acc.name}</div>
-                      <div className="text-[10px] text-stone-400">{acc.email}</div>
-                    </div>
-                    <span className="text-[10px] font-semibold text-stone-500">{acc.role}</span>
+                    <LogOut className="w-3.5 h-3.5" />
+                    Sign Out / Log Out
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <Link
+                href="/login"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs"
+              >
+                Sign In
+              </Link>
+            )}
           </div>
         </div>
       </div>
