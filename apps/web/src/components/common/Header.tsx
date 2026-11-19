@@ -1,0 +1,190 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import {
+  SEEDED_ACCOUNTS,
+  getStoredSession,
+  loginAs,
+  UserSession,
+} from '@/lib/api';
+import { db } from '@/lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import {
+  ShoppingBag,
+  Inbox,
+  Factory,
+  FileCheck2,
+  PieChart,
+  Wifi,
+  WifiOff,
+  UserCheck,
+  ChevronDown,
+} from 'lucide-react';
+
+export function Header() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [isSwitching, setIsSwitching] = useState<boolean>(false);
+
+  // Monitor Dexie queued orders count
+  const queuedCount = useLiveQuery(
+    () => db.queuedOrders.where('syncStatus').equals('QUEUED').count(),
+    [],
+    0,
+  );
+
+  useEffect(() => {
+    // Initial session
+    const current = getStoredSession();
+    if (current) {
+      setSession(current);
+    } else {
+      // Default to salesman on initial load
+      loginAs('salesman@snackflow.com').then(setSession).catch(console.error);
+    }
+
+    // Monitor online/offline events
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    setIsOnline(navigator.onLine);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const handleRoleChange = async (email: string, targetPath: string) => {
+    setIsSwitching(true);
+    try {
+      const newSession = await loginAs(email);
+      setSession(newSession);
+      router.push(targetPath);
+    } catch (e: any) {
+      alert(`Role switch failed: ${e.message}`);
+    } finally {
+      setIsSwitching(false);
+    }
+  };
+
+  const navItems = [
+    { label: 'Salesman (PWA)', path: '/sales', icon: ShoppingBag, role: 'SALESMAN', email: 'salesman@snackflow.com' },
+    { label: 'Admin Inbox', path: '/admin/orders', icon: Inbox, role: 'ADMIN', email: 'admin@snackflow.com' },
+    { label: 'Production Wizard', path: '/production', icon: Factory, role: 'PRODUCTION', email: 'production@snackflow.com' },
+    { label: 'Auditor Reports', path: '/audit', icon: FileCheck2, role: 'AUDITOR', email: 'auditor@snackflow.com' },
+    { label: 'Owner Insights', path: '/owner', icon: PieChart, role: 'OWNER', email: 'owner@snackflow.com' },
+  ];
+
+  return (
+    <header className="sticky top-0 z-50 border-b border-amber-950/10 bg-white/95 backdrop-blur-md shadow-xs">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16">
+          {/* Logo & Company */}
+          <div className="flex items-center gap-3">
+            <Link href="/" className="flex items-center gap-2.5 group">
+              <div className="w-10 h-10 rounded-xl bg-amber-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-amber-600/20 group-hover:scale-105 transition-transform">
+                மு
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-stone-900 tracking-tight text-lg">SnackFlow</span>
+                  <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded uppercase tracking-wider">NIT-T CDI</span>
+                </div>
+                <p className="text-xs text-stone-500 font-medium">Sri Murugan Snacks • மதுரை</p>
+              </div>
+            </Link>
+          </div>
+
+          {/* Persona Navigation Tabs */}
+          <nav className="hidden md:flex items-center gap-1 bg-stone-100/80 p-1 rounded-xl border border-stone-200/60">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname.startsWith(item.path);
+              return (
+                <button
+                  key={item.path}
+                  onClick={() => handleRoleChange(item.email, item.path)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    isActive
+                      ? 'bg-white text-amber-900 shadow-xs border border-stone-200/80'
+                      : 'text-stone-600 hover:text-stone-900 hover:bg-white/50'
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-600' : 'text-stone-400'}`} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Right Status & Persona Badge */}
+          <div className="flex items-center gap-2.5">
+            {/* Online / Outbox Pill */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-stone-50 border-stone-200">
+              {isOnline ? (
+                <>
+                  <Wifi className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-stone-700 hidden sm:inline">Online</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
+                  <span className="text-rose-700 font-semibold">Offline</span>
+                </>
+              )}
+              {queuedCount > 0 && (
+                <span className="ml-1 bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                  {queuedCount} queued
+                </span>
+              )}
+            </div>
+
+            {/* Active User Pill */}
+            <div className="relative group">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200/70 border border-stone-200/80 text-xs font-medium text-stone-800 cursor-pointer">
+                <UserCheck className="w-3.5 h-3.5 text-amber-600" />
+                <span className="hidden sm:inline font-semibold">{session?.name || 'Logging in...'}</span>
+                <span className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                  {session?.role || '...'}
+                </span>
+                <ChevronDown className="w-3 h-3 text-stone-400" />
+              </div>
+
+              {/* Dropdown for role switching */}
+              <div className="absolute right-0 mt-1 w-64 bg-white border border-stone-200 rounded-xl shadow-lg p-1.5 hidden group-hover:block z-50">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-1">
+                  Switch User Role
+                </p>
+                {SEEDED_ACCOUNTS.map((acc) => (
+                  <button
+                    key={acc.email}
+                    disabled={isSwitching}
+                    onClick={() => {
+                      const target = navItems.find((n) => n.role === acc.role)?.path || '/';
+                      handleRoleChange(acc.email, target);
+                    }}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between hover:bg-amber-50 transition-colors ${
+                      session?.email === acc.email ? 'bg-amber-50/80 font-bold text-amber-900' : 'text-stone-700'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-medium">{acc.name}</div>
+                      <div className="text-[10px] text-stone-400">{acc.email}</div>
+                    </div>
+                    <span className="text-[10px] font-semibold text-stone-500">{acc.role}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}

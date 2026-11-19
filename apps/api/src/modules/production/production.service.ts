@@ -396,7 +396,7 @@ export class ProductionService {
       }
 
       // Transition to CLOSED
-      return tx.productionRun.update({
+      const closedRun = await tx.productionRun.update({
         where: { id: run.id },
         data: { status: RunStatus.CLOSED },
         include: {
@@ -404,6 +404,13 @@ export class ProductionService {
           overheads: true,
         },
       });
+
+      return {
+        run: closedRun,
+        onHandShare: onHandShare.toNumber(),
+        cogsShare: _cogsShare.toNumber(),
+        finalUnitCost: finalUnitCost.toNumber(),
+      };
     });
   }
 
