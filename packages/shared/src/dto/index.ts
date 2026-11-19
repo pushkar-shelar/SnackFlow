@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Role, PartyKind, PaymentMode, OverheadType, WastageReason } from '../enums/index.js';
+import { PartyKind, PaymentMode, OverheadType } from '../enums/index.js';
 
 // Auth DTOs
 export const LoginSchema = z.object({

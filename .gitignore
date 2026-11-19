@@ -20,6 +20,8 @@ coverage/
 test-results/
 playwright-report/
 blob-report/
+.pgdata/
+
 
 # OS files
 .DS_Store
