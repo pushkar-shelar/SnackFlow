@@ -13,6 +13,10 @@
     "typecheck": "turbo run typecheck",
     "verify": "turbo run lint typecheck test",
     "benchmark": "pnpm --filter @snackflow/api benchmark",
+    "db:migrate": "pnpm --filter @snackflow/api db:migrate",
+    "db:seed": "pnpm --filter @snackflow/api db:seed",
+    "db:reset:local": "pnpm --filter @snackflow/api db:reset:local",
+    "demo:reset": "npx tsx scripts/demo-reset.ts",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "clean": "turbo run clean && rm -rf node_modules"
   },
