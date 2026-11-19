@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: snackflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: snackflow
+      POSTGRES_PASSWORD: snackflow123
+      POSTGRES_DB: snackflow_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U snackflow -d snackflow_db']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: snackflow-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: snackflow-mailpit
+    restart: unless-stopped
+    ports:
+      - '1025:1025' # SMTP
+      - '8025:8025' # Web UI
+
+  migrate-seed:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.migrate
+    container_name: snackflow-migrate-seed
+    restart: 'no'
+    environment:
+      DATABASE_URL: 'postgresql://snackflow:snackflow123@postgres:5432/snackflow_db?schema=public'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: snackflow-api
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: 'postgresql://snackflow:snackflow123@postgres:5432/snackflow_db?schema=public'
+      REDIS_URL: 'redis://redis:6379'
+      JWT_ACCESS_SECRET: 'snackflow-development-super-secret-access-token-2026-secure'
+      JWT_REFRESH_SECRET: 'snackflow-development-super-secret-refresh-token-2026-secure'
+      HMAC_SHARE_SECRET: 'snackflow-development-hmac-share-invoice-key-2026-secure'
+      SMTP_HOST: 'mailpit'
+      SMTP_PORT: 1025
+    ports:
+      - '4000:4000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate-seed:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.worker
+    container_name: snackflow-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: 'postgresql://snackflow:snackflow123@postgres:5432/snackflow_db?schema=public'
+      REDIS_URL: 'redis://redis:6379'
+      SMTP_HOST: 'mailpit'
+      SMTP_PORT: 1025
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate-seed:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: snackflow-web
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: 'http://localhost:4000/api/v1'
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
