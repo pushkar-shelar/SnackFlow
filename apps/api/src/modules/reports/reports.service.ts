@@ -273,7 +273,7 @@ export class ReportsService {
   }
 
   // 5. Stock Summary (Opening, Receipts, Issues, Closing, Value)
-  async getStockSummary(startDate?: string, endDate?: string) {
+  async getStockSummary(_startDate?: string, _endDate?: string) {
     const items = await this.prismaRead.item.findMany({
       include: {
         stockBalances: true,

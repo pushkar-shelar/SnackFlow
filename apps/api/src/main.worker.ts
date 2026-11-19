@@ -21,7 +21,7 @@ async function bootstrapWorker() {
         return delay;
       },
     });
-  } catch (err) {
+  } catch {
     console.warn('[BullMQ Worker] Could not connect to Redis. Worker running in idle fallback mode.');
     return;
   }
@@ -57,7 +57,7 @@ async function bootstrapWorker() {
   );
 
   // 2. Nightly Reconciliation & Audit Queue Worker
-  const auditWorker = new Worker(
+  const _auditWorker = new Worker(
     'nightly-audit',
     async (job: Job) => {
       console.log(`[Worker] Executing scheduled stock ledger reconciliation job ${job.id}...`);
