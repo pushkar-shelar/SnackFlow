@@ -157,7 +157,7 @@ describe('Phase 4 Stretch Integrations Suite (T4.1 - T4.6 Invariants)', () => {
 
     // IRN verification: 64-char SHA-256 hex string
     expect(eInvoice.IRN).toBeDefined();
-    expect(eInvoice.IRN.length).toBe(64);
+    expect(eInvoice.IRN?.length).toBe(64);
     expect(eInvoice.SignedQRCode).toContain('MOCK_SIGNED_QR');
   });
 

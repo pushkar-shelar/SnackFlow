@@ -583,7 +583,7 @@ export class ReportsService {
 
     // Sales Vouchers
     for (const inv of register.rows) {
-      const dateFormatted = inv.invoiceDate.replace(/-/g, '');
+      const dateFormatted = (inv.invoiceDate ?? '').replace(/-/g, '');
       voucherXmls.push(`
         <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
           <DATE>${dateFormatted}</DATE>
@@ -602,7 +602,7 @@ export class ReportsService {
             <AMOUNT>${inv.taxableTotal}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
           ${
-            parseFloat(inv.cgstTotal) > 0
+            toDecimal(inv.cgstTotal).greaterThan(0)
               ? `
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Output CGST</LEDGERNAME>
@@ -617,7 +617,7 @@ export class ReportsService {
               : ''
           }
           ${
-            parseFloat(inv.igstTotal) > 0
+            toDecimal(inv.igstTotal).greaterThan(0)
               ? `
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Output IGST</LEDGERNAME>
@@ -631,7 +631,7 @@ export class ReportsService {
 
     // Receipt Vouchers
     for (const col of collections.rows) {
-      const dateFormatted = col.paymentDate.replace(/-/g, '');
+      const dateFormatted = (col.paymentDate ?? '').replace(/-/g, '');
       voucherXmls.push(`
         <VOUCHER VCHTYPE="Receipt" ACTION="Create">
           <DATE>${dateFormatted}</DATE>
