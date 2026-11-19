@@ -11,6 +11,8 @@ import { CatalogModule } from './modules/catalog/catalog.module.js';
 import { SalesModule } from './modules/sales/sales.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
+import { ReportsModule } from './modules/reports/reports.module.js';
+import { AlertsModule } from './modules/alerts/alerts.module.js';
 import { AuthGuard } from './core/guards/auth.guard.js';
 import { RbacGuard } from './core/guards/rbac.guard.js';
 import { Rfc7807ExceptionFilter } from './core/filters/rfc7807-exception.filter.js';
@@ -35,6 +37,8 @@ import { HealthController } from './core/controllers/health.controller.js';
     SalesModule,
     BillingModule,
     PaymentsModule,
+    ReportsModule,
+    AlertsModule,
   ],
   controllers: [HealthController],
   providers: [
