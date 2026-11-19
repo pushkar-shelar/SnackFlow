@@ -56,7 +56,7 @@ import { HealthController } from './core/controllers/health.controller.js';
     },
     {
       provide: APP_PIPE,
-      useClass: ZodValidationPipe,
+      useFactory: () => new ZodValidationPipe(),
     },
     {
       provide: APP_INTERCEPTOR,
