@@ -1,0 +1,129 @@
+name: SnackFlow Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Job 1: Local Docker / Service verification (Offline evaluator invariant)
+  verify-local:
+    name: Verify (Docker / Postgres 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: snackflow
+          POSTGRES_PASSWORD: snackflow123
+          POSTGRES_DB: snackflow_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: 'postgresql://snackflow:snackflow123@localhost:5432/snackflow_db?schema=public'
+      DIRECT_URL: 'postgresql://snackflow:snackflow123@localhost:5432/snackflow_db?schema=public'
+      READONLY_DATABASE_URL: 'postgresql://snackflow:snackflow123@localhost:5432/snackflow_db?schema=public'
+      JWT_ACCESS_SECRET: 'snackflow-ci-development-secret-access-token-2026'
+      JWT_REFRESH_SECRET: 'snackflow-ci-development-secret-refresh-token-2026'
+      HMAC_SHARE_SECRET: 'snackflow-ci-development-hmac-key-2026-very-secure'
+      APP_TZ: 'Asia/Kolkata'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Push Database Schema & Triggers
+        run: |
+          pnpm --filter @snackflow/api prisma:generate
+          pnpm --filter @snackflow/api exec prisma db push
+          pnpm --filter @snackflow/api exec tsx scripts/apply-roles.ts
+          pnpm --filter @snackflow/api db:seed
+
+      - name: Run Monorepo Verification (Lint, Typecheck, Tests)
+        run: pnpm verify
+
+      - name: Run Section 14 Authoritative Benchmark
+        run: pnpm benchmark
+
+  # Job 2: Neon Serverless Postgres Branching CI (When NEON_API_KEY is configured)
+  verify-neon:
+    name: Verify (Neon Cloud Ephemeral Branch)
+    runs-on: ubuntu-latest
+    if: false # Enable when NEON_API_KEY and NEON_PROJECT_ID secrets are present in repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create Ephemeral Neon Branch
+        id: create-branch
+        uses: neondatabase/create-branch-action@v5
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          parent: seed-baseline
+          branch_name: ci/${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Run Migrations and Benchmark against Ephemeral Neon
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url_with_pooler }}
+          DIRECT_URL: ${{ steps.create-branch.outputs.db_url }}
+          READONLY_DATABASE_URL: ${{ steps.create-branch.outputs.db_url_with_pooler }}
+          JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET }}
+          JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+          HMAC_SHARE_SECRET: ${{ secrets.HMAC_SHARE_SECRET }}
+          APP_TZ: 'Asia/Kolkata'
+        run: |
+          pnpm --filter @snackflow/api prisma:generate
+          pnpm --filter @snackflow/api exec prisma db push
+          pnpm benchmark
+
+      - name: Delete Ephemeral Neon Branch (Safety invariant)
+        if: always()
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          branch: ci/${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
