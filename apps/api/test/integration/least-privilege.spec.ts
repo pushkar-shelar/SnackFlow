@@ -36,12 +36,12 @@ describe('PostgreSQL Least-Privilege Role Matrix (Neon & Docker Invariants)', ()
       await expect(
         readonlyClient.party.create({
           data: {
-            code: 'TEST-UNAUTH-READONLY',
             name: 'Unauthorized Readonly Creation',
-            type: 'CUSTOMER',
+            kind: 'CUSTOMER_RETAILER',
             phone: '9999999999',
             stateCode: '33',
-            balance: 0,
+            address: 'Tamil Nadu',
+            companyId: '00000000-0000-0000-0000-000000000000',
           },
         }),
       ).rejects.toThrow();
@@ -60,7 +60,7 @@ describe('PostgreSQL Least-Privilege Role Matrix (Neon & Docker Invariants)', ()
         await expect(
           runtimeClient.stockLedger.update({
             where: { id: entry.id },
-            data: { notes: 'Illegal runtime update' },
+            data: { sourceType: 'ILLEGAL_RUNTIME_UPDATE' },
           }),
         ).rejects.toThrow();
       }
@@ -80,7 +80,7 @@ describe('PostgreSQL Least-Privilege Role Matrix (Neon & Docker Invariants)', ()
     it('rejects UPDATE on immutable audit_log (permission denied)', async () => {
       await expect(
         runtimeClient.$executeRawUnsafe(
-          `UPDATE audit_log SET action = 'HACKED' WHERE id = 'non-existent'`,
+          `UPDATE audit_log SET action = 'HACKED' WHERE id = '00000000-0000-0000-0000-000000000000'`,
         ),
       ).rejects.toThrow();
     });
@@ -88,7 +88,7 @@ describe('PostgreSQL Least-Privilege Role Matrix (Neon & Docker Invariants)', ()
     it('rejects DELETE on immutable audit_log (permission denied)', async () => {
       await expect(
         runtimeClient.$executeRawUnsafe(
-          `DELETE FROM audit_log WHERE id = 'non-existent'`,
+          `DELETE FROM audit_log WHERE id = '00000000-0000-0000-0000-000000000000'`,
         ),
       ).rejects.toThrow();
     });
