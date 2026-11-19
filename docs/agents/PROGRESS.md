@@ -36,3 +36,4 @@
 | 2026-11-20T01:41:04+05:30 | T4.1-T4.10 | Lead | 52c702a | Implemented HMAC share links, UPI deep link QR, e-Invoice INV-01 JSON with SHA-256 IRN, Tally Prime XML, and Tamil language toggle. 3/3 stretch tests green. |
 | 2026-11-20T01:43:18+05:30 | T5.1-T5.6 | Lead | e344f51 | Complete project documentation authored: README.md, docs/DESIGN_NOTE.md, docs/DEMO_SCRIPT.md, docs/CODE_TOUR.md. |
 | 2026-11-20T01:47:34+05:30 | Final Gate | Lead | f5520db | Final Gate passed: pnpm benchmark (15/15 checks), pnpm test (51/51 tests across 11 test suites), pnpm lint, and pnpm typecheck 100% green. |
+| 2026-11-20T02:04:16+05:30 | Auth & Account Switch | Lead | a1b693c | Dedicated /login page, unauthenticated route guard, account switcher with 5 personas, and sign-out flow implemented and verified. |
