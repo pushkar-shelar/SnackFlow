@@ -33,3 +33,6 @@
 | 2026-11-20T01:32:31+05:30 | T3.1-T3.5 | Lead | 6a97095 | Implemented §10 reports engine, Excel/CSV exports, BullMQ background worker (main.worker.ts), and variance/reorder alerts. 8/8 tests green. |
 | 2026-11-20T01:34:12+05:30 | T3.6 | Lead | e123fa7 | Connected live report downloads and web export streaming to Auditor Reports Hub (/audit). |
 | 2026-11-20T01:35:48+05:30 | Phase 3 Gate | Lead | 03a7d60 | Phase 3 complete: pnpm verify (9/9 tasks across @snackflow/*) and pnpm benchmark (15/15 checks) passing 100%. |
+| 2026-11-20T01:41:04+05:30 | T4.1-T4.10 | Lead | 52c702a | Implemented HMAC share links, UPI deep link QR, e-Invoice INV-01 JSON with SHA-256 IRN, Tally Prime XML, and Tamil language toggle. 3/3 stretch tests green. |
+| 2026-11-20T01:43:18+05:30 | T5.1-T5.6 | Lead | e344f51 | Complete project documentation authored: README.md, docs/DESIGN_NOTE.md, docs/DEMO_SCRIPT.md, docs/CODE_TOUR.md. |
+| 2026-11-20T01:43:40+05:30 | Final Gate | Lead | pending | Final Gate verification: pnpm benchmark (15/15 checks) and pnpm verify (9/9 tasks) 100% green. |
