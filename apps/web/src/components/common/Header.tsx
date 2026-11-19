@@ -29,6 +29,7 @@ export function Header() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [isSwitching, setIsSwitching] = useState<boolean>(false);
+  const [currentLang, setCurrentLang] = useState<'ta' | 'en'>('ta');
 
   // Monitor Dexie queued orders count
   const queuedCount = useLiveQuery(
@@ -125,6 +126,21 @@ export function Header() {
 
           {/* Right Status & Persona Badge */}
           <div className="flex items-center gap-2.5">
+            {/* Language Toggle (T4.10) */}
+            <button
+              onClick={() => {
+                const newLang = currentLang === 'ta' ? 'en' : 'ta';
+                setCurrentLang(newLang);
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('snackflow_lang', newLang);
+                }
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100 transition-colors shadow-2xs"
+              title="Toggle Tamil / English (மொழி மாற்றம்)"
+            >
+              <span>{currentLang === 'ta' ? 'தமிழ்' : 'English'}</span>
+            </button>
+
             {/* Online / Outbox Pill */}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-stone-50 border-stone-200">
               {isOnline ? (

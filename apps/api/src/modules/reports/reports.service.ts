@@ -573,4 +573,101 @@ export class ReportsService {
       rows,
     };
   }
+
+  // T4.4: Tally Prime XML Export (Sales & Receipt vouchers)
+  async getTallyXml(startDate?: string, endDate?: string): Promise<string> {
+    const register = await this.getSalesRegister(startDate, endDate);
+    const collections = await this.getCollectionsReport(startDate, endDate);
+
+    const voucherXmls: string[] = [];
+
+    // Sales Vouchers
+    for (const inv of register.rows) {
+      const dateFormatted = inv.invoiceDate.replace(/-/g, '');
+      voucherXmls.push(`
+        <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
+          <DATE>${dateFormatted}</DATE>
+          <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+          <VOUCHERNUMBER>${inv.invoiceNumber}</VOUCHERNUMBER>
+          <PARTYLEDGERNAME>${inv.customerName}</PARTYLEDGERNAME>
+          <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${inv.customerName}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <AMOUNT>-${inv.grandTotal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Sales Account</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>${inv.taxableTotal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+          ${
+            parseFloat(inv.cgstTotal) > 0
+              ? `
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Output CGST</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>${inv.cgstTotal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Output SGST</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>${inv.sgstTotal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>`
+              : ''
+          }
+          ${
+            parseFloat(inv.igstTotal) > 0
+              ? `
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Output IGST</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>${inv.igstTotal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>`
+              : ''
+          }
+        </VOUCHER>`);
+    }
+
+    // Receipt Vouchers
+    for (const col of collections.rows) {
+      const dateFormatted = col.paymentDate.replace(/-/g, '');
+      voucherXmls.push(`
+        <VOUCHER VCHTYPE="Receipt" ACTION="Create">
+          <DATE>${dateFormatted}</DATE>
+          <VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>
+          <VOUCHERNUMBER>${col.paymentNumber}</VOUCHERNUMBER>
+          <PARTYLEDGERNAME>${col.customerName}</PARTYLEDGERNAME>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Bank Account / UPI</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <AMOUNT>-${col.amount}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${col.customerName}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>${col.amount}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+        </VOUCHER>`);
+    }
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+      </REQUESTDESC>
+      <REQUESTDATA>
+        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+          ${voucherXmls.join('\n')}
+        </TALLYMESSAGE>
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`;
+  }
 }

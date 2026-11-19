@@ -6,11 +6,12 @@ import {
   Query,
   Body,
   Inject,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { BillingService } from './billing.service.js';
 import { CreditNoteService } from './credit-note.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
-import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
+import { RequirePermission, Public } from '../../core/decorators/require-permission.decorator.js';
 import {
   Permission,
   PostInvoiceSchema,
@@ -21,7 +22,7 @@ import {
 } from '@snackflow/shared';
 import { ZodValidationPipe } from '../../core/pipes/zod-validation.pipe.js';
 
-@Controller()
+@Controller('invoices')
 export class BillingController {
   constructor(
     @Inject(BillingService) private readonly billingService: BillingService,
@@ -29,7 +30,7 @@ export class BillingController {
   ) {}
 
   @RequirePermission(Permission.INVOICE_POST)
-  @Post('invoices')
+  @Post()
   async postInvoice(
     @CurrentUser() user: AuthenticatedUser,
     @Body(new ZodValidationPipe(PostInvoiceSchema)) dto: PostInvoiceDto,
@@ -38,7 +39,7 @@ export class BillingController {
   }
 
   @RequirePermission(Permission.ORDER_READ_ALL, Permission.REPORT_READ)
-  @Get('invoices')
+  @Get()
   async listInvoices(
     @CurrentUser() user: AuthenticatedUser,
     @Query('partyId') partyId?: string,
@@ -50,12 +51,43 @@ export class BillingController {
     return this.billingService.listInvoices(user.companyId, filters);
   }
 
+  // T4.1 & T4.2: HMAC-signed expiring invoice share link & UPI QR
+  @RequirePermission(Permission.ORDER_READ_ALL, Permission.ORDER_READ_OWN)
+  @Get(':id/share')
+  async getShareLink(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.billingService.generateShareLink(user.companyId, id);
+  }
+
+  // T4.5: e-Invoice (INV-01 JSON) & e-Way bill JSON
+  @RequirePermission(Permission.ORDER_READ_ALL, Permission.REPORT_READ)
+  @Get(':id/einvoice')
+  async getEInvoice(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.billingService.getEInvoiceJson(user.companyId, id);
+  }
+
+  // Public authenticated view using HMAC token
+  @Public()
+  @Get('public/:id')
+  async getPublicInvoice(
+    @Param('id') id: string,
+    @Query('expires', ParseIntPipe) expires: number,
+    @Query('sig') sig: string,
+  ) {
+    return this.billingService.verifyAndGetPublicInvoice(id, expires, sig);
+  }
+
   @RequirePermission(
     Permission.ORDER_READ_OWN,
     Permission.ORDER_READ_ALL,
     Permission.REPORT_READ,
   )
-  @Get('invoices/:id')
+  @Get(':id')
   async getInvoice(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -64,7 +96,7 @@ export class BillingController {
   }
 
   @RequirePermission(Permission.INVOICE_CANCEL)
-  @Post('invoices/:id/credit-note')
+  @Post(':id/credit-note')
   async createCreditNote(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,

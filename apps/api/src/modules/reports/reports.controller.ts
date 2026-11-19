@@ -109,6 +109,23 @@ export class ReportsController {
     return this.reportsService.getOutstandingAgeing();
   }
 
+  // T4.4: Tally Prime XML Export
+  @Get('tally-xml')
+  @RequirePermission(Permission.REPORT_EXPORT)
+  async getTallyXml(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Res() res?: Response,
+  ) {
+    const xml = await this.reportsService.getTallyXml(startDate, endDate);
+    if (res) {
+      res.setHeader('Content-Type', 'application/xml');
+      res.setHeader('Content-Disposition', 'attachment; filename="tally-vouchers.xml"');
+      return res.send(xml);
+    }
+    return xml;
+  }
+
   // File Exports (CSV & Excel)
   @Get('export/:reportType')
   @RequirePermission(Permission.REPORT_EXPORT)
