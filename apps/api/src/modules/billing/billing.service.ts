@@ -62,7 +62,7 @@ export class BillingService {
       const gst = computeLineGst({
         qty: line.qty,
         rate: line.rate,
-        gstRatePct: line.item.gstRate,
+        gstRate: line.gstRate,
         isInterState,
       });
 
@@ -79,7 +79,7 @@ export class BillingService {
         uom: line.uom,
         rate: line.rate,
         taxable: gst.taxable,
-        gstRate: line.item.gstRate,
+        gstRate: line.gstRate,
         cgst: gst.cgst,
         sgst: gst.sgst,
         igst: gst.igst,
@@ -91,34 +91,16 @@ export class BillingService {
     const roundOff = roundedGrandTotal.minus(grandTotal);
 
     return this.prisma.$transaction(async (tx) => {
-      const seqRecord = await tx.$queryRaw<{ id: string; last_number: number }[]>`
-        SELECT id, last_number 
-        FROM document_sequence 
-        WHERE company_id = ${companyId}::uuid AND fy = ${fy} AND type = 'INVOICE'
-        FOR UPDATE
+      // 1. Allocate sequence under row lock
+      const seq = await tx.$queryRaw<Array<{ next_no: number }>>`
+        INSERT INTO document_sequence (id, company_id, doc_type, fy, next_no, updated_at)
+        VALUES (gen_random_uuid(), ${companyId}::uuid, 'INV', ${fy}, 2, NOW())
+        ON CONFLICT (company_id, doc_type, fy)
+        DO UPDATE SET next_no = document_sequence.next_no + 1, updated_at = NOW()
+        RETURNING next_no - 1 AS next_no
       `;
-
-      let nextNum = 1;
-      if (seqRecord.length > 0 && seqRecord[0]) {
-        nextNum = seqRecord[0].last_number + 1;
-        await tx.$executeRaw`
-          UPDATE document_sequence 
-          SET last_number = ${nextNum}, updated_at = NOW() 
-          WHERE id = ${seqRecord[0].id}::uuid
-        `;
-      } else {
-        await tx.documentSequence.create({
-          data: {
-            companyId,
-            fy,
-            type: 'INVOICE',
-            prefix: 'INV',
-            lastNumber: nextNum,
-          },
-        });
-      }
-
-      const invoiceNumber = formatInvoiceNumber(nextNum, fy, 'INV');
+      const nextNo = seq[0]?.next_no ?? 1;
+      const invoiceNumber = formatInvoiceNumber(nextNo, fy, 'INV');
 
       // Generate SHA-256 IRN & Signed QR per NIC e-Invoice specification
       const plainIrn = `33AAAAA0000A1Z5${fy}INV${invoiceNumber}`;
