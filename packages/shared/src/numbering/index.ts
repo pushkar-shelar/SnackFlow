@@ -1,11 +1,22 @@
-export function getFinancialYear(date: Date = new Date()): string {
-  const month = date.getMonth(); // 0-indexed: 0 = Jan, 2 = Mar, 3 = Apr
-  const fullYear = date.getFullYear(); // e.g. 2026
+export function getFinancialYear(date: Date = new Date(), timeZone: string = 'Asia/Kolkata'): string {
+  // Convert date to specified timezone (defaulting to Asia/Kolkata)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  });
+  const parts = formatter.formatToParts(date);
+  const monthPart = parts.find((p) => p.type === 'month')?.value;
+  const yearPart = parts.find((p) => p.type === 'year')?.value;
+
+  const month = parseInt(monthPart || '1', 10); // 1-indexed: 1 = Jan, 3 = Mar, 4 = Apr
+  const fullYear = parseInt(yearPart || '2026', 10);
 
   let startYear: number;
   let endYear: number;
 
-  if (month >= 3) {
+  if (month >= 4) {
     // April to December
     startYear = fullYear;
     endYear = fullYear + 1;
