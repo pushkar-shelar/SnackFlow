@@ -44,12 +44,14 @@ export class RbacGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required for RBAC evaluation');
     }
 
-    for (const permission of requiredPermissions) {
-      if (!hasPermission(user.role, permission)) {
-        throw new ForbiddenException(
-          `Access forbidden: Role '${user.role}' lacks required permission '${permission}'`,
-        );
-      }
+    const hasAny = requiredPermissions.some((permission) =>
+      hasPermission(user.role, permission),
+    );
+
+    if (!hasAny) {
+      throw new ForbiddenException(
+        `Access forbidden: Role '${user.role}' lacks required permission '${requiredPermissions[0]}'`,
+      );
     }
 
     return true;

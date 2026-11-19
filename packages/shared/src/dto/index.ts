@@ -39,6 +39,19 @@ export const PostInvoiceSchema = z.object({
 });
 export type PostInvoiceDto = z.infer<typeof PostInvoiceSchema>;
 
+// Dispatch DTOs
+export const DispatchInvoiceSchema = z.object({
+  invoiceId: z.string().uuid(),
+  notes: z.string().optional(),
+});
+export type DispatchInvoiceDto = z.infer<typeof DispatchInvoiceSchema>;
+
+// Credit Note DTOs
+export const CreateCreditNoteSchema = z.object({
+  reason: z.string().min(1),
+});
+export type CreateCreditNoteDto = z.infer<typeof CreateCreditNoteSchema>;
+
 // Payment DTOs
 export const PaymentAllocationInputSchema = z.object({
   invoiceId: z.string().uuid(),

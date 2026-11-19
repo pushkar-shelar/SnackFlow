@@ -114,3 +114,41 @@ export function calculateInvoiceGst(
     grandTotal,
   };
 }
+
+export interface LineGstInput {
+  rate: DecimalValue;
+  qty: DecimalValue;
+  gstRate: DecimalValue;
+  isInterState: boolean;
+}
+
+export function computeLineGst(input: LineGstInput) {
+  const qty = toDecimal(input.qty);
+  const rate = toDecimal(input.rate);
+  const gstRate = toDecimal(input.gstRate);
+
+  const taxable = roundMoney(qty.times(rate));
+  let cgst = new Decimal(0);
+  let sgst = new Decimal(0);
+  let igst = new Decimal(0);
+
+  if (input.isInterState) {
+    igst = roundMoney(taxable.times(gstRate).dividedBy(100));
+  } else {
+    const halfRate = gstRate.dividedBy(2);
+    cgst = roundMoney(taxable.times(halfRate).dividedBy(100));
+    sgst = roundMoney(taxable.times(halfRate).dividedBy(100));
+  }
+
+  const totalTax = cgst.plus(sgst).plus(igst);
+  const total = taxable.plus(totalTax);
+
+  return {
+    taxable: taxable.toNumber(),
+    cgst: cgst.toNumber(),
+    sgst: sgst.toNumber(),
+    igst: igst.toNumber(),
+    totalTax: totalTax.toNumber(),
+    total: total.toNumber(),
+  };
+}
