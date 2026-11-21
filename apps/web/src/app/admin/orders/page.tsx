@@ -13,9 +13,19 @@ import {
   QrCode,
   MessageSquare,
   Search,
+  Store,
+  MapPin,
+  Phone,
+  UserCheck,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function AdminOrdersPage() {
+  const [activeAdminTab, setActiveAdminTab] = useState<'ORDERS' | 'STORES'>('ORDERS');
+  const [storeApplications, setStoreApplications] = useState<any[]>([]);
+  const [approvalForms, setApprovalForms] = useState<Record<string, { creditLimit: number; creditDays: number }>>({});
+  const [approvingAppId, setApprovingAppId] = useState<string | null>(null);
+
   const [orders, setOrders] = useState<any[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
@@ -46,9 +56,45 @@ export default function AdminOrdersPage() {
     }
   }, []);
 
+  const loadStoreApplications = useCallback(async () => {
+    try {
+      const data = await apiFetch<any[]>('/parties/applications');
+      setStoreApplications(data);
+      setApprovalForms((prev) => {
+        const initial = { ...prev };
+        for (const app of data) {
+          if (!initial[app.id]) {
+            initial[app.id] = { creditLimit: 15000, creditDays: 30 };
+          }
+        }
+        return initial;
+      });
+    } catch (e) {
+      console.warn('Failed to load store applications', e);
+    }
+  }, []);
+
+  const handleApproveStore = async (appId: string) => {
+    setApprovingAppId(appId);
+    try {
+      const form = approvalForms[appId] || { creditLimit: 15000, creditDays: 30 };
+      await apiFetch(`/parties/applications/${appId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(form),
+      });
+      alert('Store approved and added to active customer master!');
+      loadStoreApplications();
+    } catch (e: any) {
+      alert(e.message || 'Failed to approve store application');
+    } finally {
+      setApprovingAppId(null);
+    }
+  };
+
   useEffect(() => {
     loadOrders();
-  }, [loadOrders]);
+    loadStoreApplications();
+  }, [loadOrders, loadStoreApplications]);
 
   useEffect(() => {
     if (selectedOrderId) {
@@ -171,6 +217,8 @@ export default function AdminOrdersPage() {
     return matchesStatus && matchesSearch;
   });
 
+  const pendingStoreCount = storeApplications.filter((a) => a.status === 'PENDING').length;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {/* Top Banner with Quick Actions and Keyboard Hint */}
@@ -178,23 +226,213 @@ export default function AdminOrdersPage() {
         <div>
           <h1 className="text-xl font-bold text-stone-900 flex items-center gap-2">
             <Inbox className="w-6 h-6 text-amber-600" />
-            Admin Order Management & Invoicing
+            Admin Order Management & Store Onboarding
           </h1>
           <p className="text-xs text-stone-500 mt-0.5">
-            Real-time stock coverage evaluation, keyboard approvals (A/R/H), one-click GST invoicing & FEFO dispatch
+            Review salesmen store registrations, approve credit limits, allocate stock, and dispatch FEFO snack batches
           </p>
         </div>
 
-        {/* Keyboard hints pill */}
-        <div className="flex items-center gap-2 bg-stone-100 px-3 py-1.5 rounded-xl border border-stone-200 text-xs font-medium text-stone-600">
-          <span className="font-semibold text-stone-800">Shortcuts:</span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white border border-stone-300 font-mono text-[11px] shadow-xs">A</kbd> Approve
-          <kbd className="px-1.5 py-0.5 rounded bg-white border border-stone-300 font-mono text-[11px] shadow-xs">R</kbd> Reject
-          <kbd className="px-1.5 py-0.5 rounded bg-white border border-stone-300 font-mono text-[11px] shadow-xs">H</kbd> Hold
+        <div className="flex items-center gap-3">
+          {/* Navigation Tabs Pill */}
+          <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 text-xs font-semibold">
+            <button
+              onClick={() => setActiveAdminTab('ORDERS')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeAdminTab === 'ORDERS' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-600'
+              }`}
+            >
+              Orders Inbox
+            </button>
+            <button
+              onClick={() => setActiveAdminTab('STORES')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                activeAdminTab === 'STORES' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-600'
+              }`}
+            >
+              <span>Store Approvals</span>
+              {pendingStoreCount > 0 && (
+                <span className="bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                  {pendingStoreCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Keyboard hints pill */}
+          {activeAdminTab === 'ORDERS' && (
+            <div className="hidden sm:flex items-center gap-2 bg-stone-100 px-3 py-1.5 rounded-xl border border-stone-200 text-xs font-medium text-stone-600">
+              <span className="font-semibold text-stone-800">Shortcuts:</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-white border border-stone-300 font-mono text-[11px] shadow-xs">A</kbd> Approve
+              <kbd className="px-1.5 py-0.5 rounded bg-white border border-stone-300 font-mono text-[11px] shadow-xs">R</kbd> Reject
+              <kbd className="px-1.5 py-0.5 rounded bg-white border border-stone-300 font-mono text-[11px] shadow-xs">H</kbd> Hold
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Split View Container */}
+      {activeAdminTab === 'STORES' ? (
+        /* Store Applications Approvals View */
+        <div className="mt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Store className="w-5 h-5 text-amber-600" />
+              <h2 className="text-sm font-bold text-stone-900">
+                Salesmen Store Onboarding Queue ({storeApplications.length})
+              </h2>
+            </div>
+            <button
+              onClick={loadStoreApplications}
+              className="text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-xl border border-amber-200 transition-all"
+            >
+              Refresh Queue
+            </button>
+          </div>
+
+          {storeApplications.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-stone-200 text-stone-400 text-xs">
+              No store applications submitted yet by field sales representatives.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {storeApplications.map((app) => {
+                const isPending = app.status === 'PENDING';
+                const form = approvalForms[app.id] || { creditLimit: 15000, creditDays: 30 };
+                const isApproving = approvingAppId === app.id;
+
+                return (
+                  <div
+                    key={app.id}
+                    className={`bg-white rounded-2xl border p-4 shadow-xs transition-all space-y-3.5 ${
+                      isPending ? 'border-amber-300/80 ring-1 ring-amber-400/20' : 'border-stone-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-sm text-stone-900">{app.storeName}</h3>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              app.status === 'APPROVED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : app.status === 'REJECTED'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {app.status === 'APPROVED' ? '✓ Approved & Active' : app.status === 'REJECTED' ? '✕ Rejected' : '⏳ Pending Approval'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-stone-500 mt-1 flex items-center gap-1.5">
+                          <UserCheck className="w-3.5 h-3.5 text-stone-400" />
+                          <span>Submitted by: <strong>{app.salesman?.name || 'Salesman'}</strong></span>
+                          <span>• {new Date(app.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-stone-50 p-3 rounded-xl border border-stone-100 text-xs space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-500">Contact Person:</span>
+                        <span className="font-semibold text-stone-900">{app.contactPerson}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-500">Phone Number:</span>
+                        <a href={`tel:${app.phone}`} className="font-semibold text-amber-700 hover:underline flex items-center gap-1">
+                          <Phone className="w-3 h-3" />
+                          {app.phone}
+                        </a>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-500">Street Address:</span>
+                        <span className="font-medium text-stone-700 text-right max-w-[220px] truncate">{app.address}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-500">GSTIN:</span>
+                        <span className="font-mono text-stone-700">{app.gstin || 'Unregistered Composite'}</span>
+                      </div>
+                      {app.geoLat && app.geoLng && (
+                        <div className="flex items-center justify-between pt-1 border-t border-stone-200">
+                          <span className="text-stone-500 flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-emerald-600" />
+                            GPS Tagged:
+                          </span>
+                          <a
+                            href={`https://maps.google.com/?q=${app.geoLat},${app.geoLng}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-emerald-700 font-semibold hover:underline text-[11px]"
+                          >
+                            View on Google Maps ↗
+                          </a>
+                        </div>
+                      )}
+                    </div>
+
+                    {isPending ? (
+                      <div className="pt-2 border-t border-stone-100 space-y-3">
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase mb-1">
+                              Credit Limit (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1000}
+                              value={form.creditLimit}
+                              onChange={(e) =>
+                                setApprovalForms({
+                                  ...approvalForms,
+                                  [app.id]: { ...form, creditLimit: Number(e.target.value) },
+                                })
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs font-semibold focus:outline-amber-600"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase mb-1">
+                              Credit Days
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={90}
+                              value={form.creditDays}
+                              onChange={(e) =>
+                                setApprovalForms({
+                                  ...approvalForms,
+                                  [app.id]: { ...form, creditDays: Number(e.target.value) },
+                                })
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs font-semibold focus:outline-amber-600"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleApproveStore(app.id)}
+                          disabled={isApproving}
+                          className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                          <ShieldCheck className="w-4 h-4" />
+                          {isApproving ? 'Approving Store...' : 'Approve & Onboard Store'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Store is onboarded and active in salesman's assigned portfolio.</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+      /* Split View Container */
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
         {/* Left Column: Orders Inbox List (5 cols) */}
         <div className="lg:col-span-5 space-y-3">
@@ -484,6 +722,7 @@ export default function AdminOrdersPage() {
           )}
         </div>
       </div>
+      )}
 
       {/* Share Invoice & UPI QR Modal */}
       {shareModalOpen && selectedOrder && (

@@ -37,7 +37,7 @@ interface Item {
 }
 
 export default function SalesmanPage() {
-  const [activeTab, setActiveTab] = useState<'NEW_ORDER' | 'HISTORY'>('NEW_ORDER');
+  const [activeTab, setActiveTab] = useState<'NEW_ORDER' | 'NEW_STORE' | 'HISTORY'>('NEW_ORDER');
   const [parties, setParties] = useState<Party[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [selectedParty, setSelectedParty] = useState<Party | null>(null);
@@ -50,12 +50,28 @@ export default function SalesmanPage() {
   // Past orders from API
   const [pastOrders, setPastOrders] = useState<any[]>([]);
 
+  // Store onboarding state
+  const [storeForm, setStoreForm] = useState({
+    storeName: '',
+    contactPerson: '',
+    phone: '',
+    address: '',
+    gstin: '',
+    geoLat: undefined as number | undefined,
+    geoLng: undefined as number | undefined,
+  });
+  const [applications, setApplications] = useState<any[]>([]);
+  const [isCapturingGps, setIsCapturingGps] = useState(false);
+  const [storeSubmitting, setStoreSubmitting] = useState(false);
+  const [storeSuccess, setStoreSuccess] = useState<string | null>(null);
+
   // Dexie queued orders
   const queuedOrders = useLiveQuery(() => db.queuedOrders.toArray(), []) || [];
 
   useEffect(() => {
     loadCatalogAndParties();
     loadPastOrders();
+    loadApplications();
   }, []);
 
   const loadCatalogAndParties = async () => {
@@ -86,6 +102,61 @@ export default function SalesmanPage() {
       setPastOrders(orders);
     } catch (e) {
       console.warn('Failed to fetch orders list', e);
+    }
+  };
+
+  const loadApplications = async () => {
+    try {
+      const apps = await apiFetch<any[]>('/parties/applications');
+      setApplications(apps);
+    } catch (e) {
+      console.warn('Failed to fetch store applications', e);
+    }
+  };
+
+  const handleCaptureGps = () => {
+    setIsCapturingGps(true);
+    navigator.geolocation?.getCurrentPosition(
+      (pos) => {
+        setStoreForm((prev) => ({
+          ...prev,
+          geoLat: Number(pos.coords.latitude.toFixed(6)),
+          geoLng: Number(pos.coords.longitude.toFixed(6)),
+        }));
+        setIsCapturingGps(false);
+      },
+      () => {
+        alert('Could not capture location. Please ensure GPS permission is enabled.');
+        setIsCapturingGps(false);
+      },
+      { timeout: 5000 }
+    );
+  };
+
+  const handleApplyStore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStoreSubmitting(true);
+    setStoreSuccess(null);
+    try {
+      await apiFetch('/parties/applications', {
+        method: 'POST',
+        body: JSON.stringify(storeForm),
+      });
+      setStoreSuccess(`Application submitted for "${storeForm.storeName}"! Waiting for Admin verification.`);
+      setStoreForm({
+        storeName: '',
+        contactPerson: '',
+        phone: '',
+        address: '',
+        gstin: '',
+        geoLat: undefined,
+        geoLng: undefined,
+      });
+      loadApplications();
+    } catch (err: any) {
+      alert(err.message || 'Failed to submit application');
+    } finally {
+      setStoreSubmitting(false);
     }
   };
 
@@ -266,16 +337,24 @@ export default function SalesmanPage() {
           <div className="flex bg-stone-100 p-0.5 rounded-lg border border-stone-200 text-xs font-semibold">
             <button
               onClick={() => setActiveTab('NEW_ORDER')}
-              className={`px-3 py-1 rounded-md transition-all ${
-                activeTab === 'NEW_ORDER' ? 'bg-white shadow-xs text-amber-900' : 'text-stone-500'
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                activeTab === 'NEW_ORDER' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-500'
               }`}
             >
-              New Order
+              Order
+            </button>
+            <button
+              onClick={() => setActiveTab('NEW_STORE')}
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                activeTab === 'NEW_STORE' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-500'
+              }`}
+            >
+              + Store
             </button>
             <button
               onClick={() => setActiveTab('HISTORY')}
-              className={`px-3 py-1 rounded-md transition-all ${
-                activeTab === 'HISTORY' ? 'bg-white shadow-xs text-amber-900' : 'text-stone-500'
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                activeTab === 'HISTORY' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-500'
               }`}
             >
               History ({pastOrders.length})
@@ -289,6 +368,13 @@ export default function SalesmanPage() {
           <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>{submitSuccess}</span>
+          </div>
+        )}
+
+        {storeSuccess && (
+          <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{storeSuccess}</span>
           </div>
         )}
 
@@ -442,6 +528,138 @@ export default function SalesmanPage() {
                   );
                 })}
               </div>
+            </div>
+          </div>
+        ) : activeTab === 'NEW_STORE' ? (
+          /* New Store Onboarding Tab */
+          <div className="space-y-4">
+            {/* Store Registration Form */}
+            <form onSubmit={handleApplyStore} className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs space-y-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-stone-700 flex items-center gap-1.5">
+                <Store className="w-4 h-4 text-amber-600" />
+                Register New Kirana / Retailer Store
+              </h2>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-stone-600 mb-1">Store / Shop Name *</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Sri Murugan Maligai Stores"
+                  value={storeForm.storeName}
+                  onChange={(e) => setStoreForm({ ...storeForm, storeName: e.target.value })}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-stone-200 focus:outline-amber-600"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-stone-600 mb-1">Contact Person *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Owner / Proprietor Name"
+                    value={storeForm.contactPerson}
+                    onChange={(e) => setStoreForm({ ...storeForm, contactPerson: e.target.value })}
+                    className="w-full text-xs px-3 py-2 rounded-xl border border-stone-200 focus:outline-amber-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-stone-600 mb-1">Mobile No (10-digit) *</label>
+                  <input
+                    required
+                    type="tel"
+                    maxLength={10}
+                    placeholder="9876543210"
+                    value={storeForm.phone}
+                    onChange={(e) => setStoreForm({ ...storeForm, phone: e.target.value })}
+                    className="w-full text-xs px-3 py-2 rounded-xl border border-stone-200 focus:outline-amber-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-stone-600 mb-1">Shop Address / Street *</label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="Full street address in Madurai / TN"
+                  value={storeForm.address}
+                  onChange={(e) => setStoreForm({ ...storeForm, address: e.target.value })}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-stone-200 focus:outline-amber-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-stone-600 mb-1">GSTIN (Optional for Unregistered Shops)</label>
+                <input
+                  type="text"
+                  placeholder="33AAAAA0000A1Z5"
+                  value={storeForm.gstin}
+                  onChange={(e) => setStoreForm({ ...storeForm, gstin: e.target.value.toUpperCase() })}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-stone-200 focus:outline-amber-600 font-mono"
+                />
+              </div>
+
+              {/* GPS Capture */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-stone-50 border border-stone-200">
+                <div className="text-[11px]">
+                  <span className="font-semibold text-stone-700">Physical Store Location:</span>
+                  <div className="text-stone-500 font-mono text-[10px]">
+                    {storeForm.geoLat ? `${storeForm.geoLat}, ${storeForm.geoLng}` : 'Location not tagged'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCaptureGps}
+                  disabled={isCapturingGps}
+                  className="px-2.5 py-1 text-xs bg-stone-200 hover:bg-stone-300 rounded-lg text-stone-700 font-semibold"
+                >
+                  {isCapturingGps ? 'Locating...' : 'Tag GPS'}
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={storeSubmitting}
+                className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50"
+              >
+                {storeSubmitting ? 'Submitting Application...' : 'Submit for Admin Approval'}
+              </button>
+            </form>
+
+            {/* Application Status History */}
+            <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                My Store Applications ({applications.length})
+              </h3>
+
+              {applications.length === 0 ? (
+                <p className="text-xs text-stone-400 text-center py-4">No store applications submitted yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {applications.map((app) => (
+                    <div key={app.id} className="p-3 rounded-xl border border-stone-100 bg-stone-50 flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-stone-900">{app.storeName}</div>
+                        <div className="text-[10px] text-stone-500">{app.contactPerson} • {app.phone}</div>
+                        <div className="text-[10px] text-stone-400">{app.address}</div>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          app.status === 'APPROVED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : app.status === 'REJECTED'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {app.status === 'APPROVED' ? '✓ Approved' : app.status === 'REJECTED' ? '✕ Rejected' : '⏳ Pending'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : (

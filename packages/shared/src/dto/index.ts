@@ -125,3 +125,22 @@ export const CreatePartySchema = z.object({
   creditDays: z.number().int().nonnegative().default(30),
 });
 export type CreatePartyDto = z.infer<typeof CreatePartySchema>;
+
+export const CreateRetailerApplicationSchema = z.object({
+  storeName: z.string().min(2, 'Store name is required'),
+  contactPerson: z.string().min(2, 'Contact person name is required'),
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Must be a valid 10-digit Indian mobile number'),
+  address: z.string().min(5, 'Address is required'),
+  stateCode: z.string().default('33'), // 33 = Tamil Nadu
+  gstin: z.string().optional(),
+  geoLat: z.number().optional(),
+  geoLng: z.number().optional(),
+});
+export type CreateRetailerApplicationDto = z.infer<typeof CreateRetailerApplicationSchema>;
+
+export const ApproveRetailerApplicationSchema = z.object({
+  creditLimit: z.number().nonnegative().default(15000),
+  creditDays: z.number().int().nonnegative().default(30),
+  priceListId: z.string().uuid().optional(),
+});
+export type ApproveRetailerApplicationDto = z.infer<typeof ApproveRetailerApplicationSchema>;

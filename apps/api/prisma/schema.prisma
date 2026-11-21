@@ -102,33 +102,34 @@ enum PaymentMode {
 }
 
 model Company {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name       String
-  gstin      String
-  stateCode  String   @map("state_code")
-  address    String
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  gstin     String
+  stateCode String   @map("state_code")
+  address   String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  users              User[]
-  parties            Party[]
-  items              Item[]
-  recipes            Recipe[]
-  packSpecs          PackSpec[]
-  priceLists         PriceList[]
-  salesOrders        SalesOrder[]
-  invoices           Invoice[]
-  dispatches         Dispatch[]
-  creditNotes        CreditNote[]
-  payments           Payment[]
-  purchases          Purchase[]
-  productionRuns     ProductionRun[]
-  overheads          OverheadEntry[]
-  stockBatches       StockBatch[]
-  stockLedgers       StockLedger[]
-  stockBalances      StockBalance[]
-  documentSequences  DocumentSequence[]
-  stockReservations  StockReservation[]
+  users                User[]
+  parties              Party[]
+  items                Item[]
+  recipes              Recipe[]
+  packSpecs            PackSpec[]
+  priceLists           PriceList[]
+  salesOrders          SalesOrder[]
+  invoices             Invoice[]
+  dispatches           Dispatch[]
+  creditNotes          CreditNote[]
+  payments             Payment[]
+  purchases            Purchase[]
+  productionRuns       ProductionRun[]
+  overheads            OverheadEntry[]
+  stockBatches         StockBatch[]
+  stockLedgers         StockLedger[]
+  stockBalances        StockBalance[]
+  documentSequences    DocumentSequence[]
+  stockReservations    StockReservation[]
+  retailerApplications RetailerApplication[]
 
   @@map("company")
 }
@@ -144,9 +145,10 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  company       Company        @relation(fields: [companyId], references: [id])
-  salesOrders   SalesOrder[]   @relation("SalesmanOrders")
-  refreshTokens RefreshToken[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  salesOrders          SalesOrder[]          @relation("SalesmanOrders")
+  refreshTokens        RefreshToken[]
+  retailerApplications RetailerApplication[]
 
   @@map("user")
 }
@@ -167,11 +169,12 @@ model Party {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  priceList   PriceList?   @relation(fields: [priceListId], references: [id])
-  salesOrders SalesOrder[]
-  purchases   Purchase[]
-  payments    Payment[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  priceList            PriceList?            @relation(fields: [priceListId], references: [id])
+  salesOrders          SalesOrder[]
+  purchases            Purchase[]
+  payments             Payment[]
+  retailerApplications RetailerApplication[]
 
   @@map("party")
 }
@@ -192,22 +195,22 @@ model Item {
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
 
-  company            Company            @relation(fields: [companyId], references: [id])
-  itemUoms           ItemUom[]
-  recipeLines        RecipeLine[]
-  packSpecLines      PackSpecLine[]     @relation("PackagingItem")
-  packSpecs          PackSpec[]         @relation("FinishedGoodItem")
-  priceListItems     PriceListItem[]
-  orderLines         SalesOrderLine[]
-  invoiceLines       InvoiceLine[]
-  purchaseLines      PurchaseLine[]
-  runInputs          RunInput[]
-  runOutputs         RunOutput[]        @relation("FgOutputItem")
-  runWastages        RunWastage[]
-  stockBatches       StockBatch[]
-  stockLedgers       StockLedger[]
-  stockBalances      StockBalance[]
-  stockReservations  StockReservation[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  itemUoms          ItemUom[]
+  recipeLines       RecipeLine[]
+  packSpecLines     PackSpecLine[]     @relation("PackagingItem")
+  packSpecs         PackSpec[]         @relation("FinishedGoodItem")
+  priceListItems    PriceListItem[]
+  orderLines        SalesOrderLine[]
+  invoiceLines      InvoiceLine[]
+  purchaseLines     PurchaseLine[]
+  runInputs         RunInput[]
+  runOutputs        RunOutput[]        @relation("FgOutputItem")
+  runWastages       RunWastage[]
+  stockBatches      StockBatch[]
+  stockLedgers      StockLedger[]
+  stockBalances     StockBalance[]
+  stockReservations StockReservation[]
 
   @@unique([companyId, sku])
   @@map("item")
@@ -245,11 +248,11 @@ model Recipe {
 }
 
 model RecipeLine {
-  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  recipeId     String  @map("recipe_id") @db.Uuid
-  itemId       String  @map("item_id") @db.Uuid
-  qtyPerBatch  Decimal @map("qty_per_batch") @db.Decimal(14, 4)
-  uom          String
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipeId    String  @map("recipe_id") @db.Uuid
+  itemId      String  @map("item_id") @db.Uuid
+  qtyPerBatch Decimal @map("qty_per_batch") @db.Decimal(14, 4)
+  uom         String
 
   recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   item   Item   @relation(fields: [itemId], references: [id])
@@ -294,9 +297,9 @@ model PriceList {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company   Company         @relation(fields: [companyId], references: [id])
-  parties   Party[]
-  items     PriceListItem[]
+  company Company         @relation(fields: [companyId], references: [id])
+  parties Party[]
+  items   PriceListItem[]
 
   @@map("price_list")
 }
@@ -343,19 +346,19 @@ model SalesOrder {
 }
 
 model SalesOrderLine {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderId      String   @map("order_id") @db.Uuid
-  itemId       String   @map("item_id") @db.Uuid
-  qty          Decimal  @db.Decimal(14, 4)
-  uom          String
-  rate         Decimal  @db.Decimal(14, 2)
-  taxable      Decimal  @db.Decimal(14, 2)
-  gstRate      Decimal  @map("gst_rate") @db.Decimal(5, 2)
-  cgst         Decimal  @default(0) @db.Decimal(14, 2)
-  sgst         Decimal  @default(0) @db.Decimal(14, 2)
-  igst         Decimal  @default(0) @db.Decimal(14, 2)
-  total        Decimal  @db.Decimal(14, 2)
-  createdAt    DateTime @default(now()) @map("created_at")
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId   String   @map("order_id") @db.Uuid
+  itemId    String   @map("item_id") @db.Uuid
+  qty       Decimal  @db.Decimal(14, 4)
+  uom       String
+  rate      Decimal  @db.Decimal(14, 2)
+  taxable   Decimal  @db.Decimal(14, 2)
+  gstRate   Decimal  @map("gst_rate") @db.Decimal(5, 2)
+  cgst      Decimal  @default(0) @db.Decimal(14, 2)
+  sgst      Decimal  @default(0) @db.Decimal(14, 2)
+  igst      Decimal  @default(0) @db.Decimal(14, 2)
+  total     Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now()) @map("created_at")
 
   order        SalesOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   item         Item               @relation(fields: [itemId], references: [id])
@@ -412,21 +415,21 @@ model Invoice {
 }
 
 model InvoiceLine {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  invoiceId     String   @map("invoice_id") @db.Uuid
-  itemId        String   @map("item_id") @db.Uuid
-  batchId       String?  @map("batch_id") @db.Uuid
-  hsn           String
-  qty           Decimal  @db.Decimal(14, 4)
-  uom           String
-  rate          Decimal  @db.Decimal(14, 2)
-  taxable       Decimal  @db.Decimal(14, 2)
-  gstRate       Decimal  @map("gst_rate") @db.Decimal(5, 2)
-  cgst          Decimal  @default(0) @db.Decimal(14, 2)
-  sgst          Decimal  @default(0) @db.Decimal(14, 2)
-  igst          Decimal  @default(0) @db.Decimal(14, 2)
-  total         Decimal  @db.Decimal(14, 2)
-  createdAt     DateTime @default(now()) @map("created_at")
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId String   @map("invoice_id") @db.Uuid
+  itemId    String   @map("item_id") @db.Uuid
+  batchId   String?  @map("batch_id") @db.Uuid
+  hsn       String
+  qty       Decimal  @db.Decimal(14, 4)
+  uom       String
+  rate      Decimal  @db.Decimal(14, 2)
+  taxable   Decimal  @db.Decimal(14, 2)
+  gstRate   Decimal  @map("gst_rate") @db.Decimal(5, 2)
+  cgst      Decimal  @default(0) @db.Decimal(14, 2)
+  sgst      Decimal  @default(0) @db.Decimal(14, 2)
+  igst      Decimal  @default(0) @db.Decimal(14, 2)
+  total     Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now()) @map("created_at")
 
   invoice       Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   item          Item           @relation(fields: [itemId], references: [id])
@@ -528,14 +531,14 @@ model PaymentAllocation {
 }
 
 model Purchase {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId          String   @map("company_id") @db.Uuid
-  partyId            String   @map("party_id") @db.Uuid
-  purchaseNo         String   @map("purchase_no")
-  supplierInvoiceNo  String   @map("supplier_invoice_no")
-  purchaseDate       DateTime @default(now()) @map("purchase_date")
-  totalAmount        Decimal  @map("total_amount") @db.Decimal(14, 2)
-  createdAt          DateTime @default(now()) @map("created_at")
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  partyId           String   @map("party_id") @db.Uuid
+  purchaseNo        String   @map("purchase_no")
+  supplierInvoiceNo String   @map("supplier_invoice_no")
+  purchaseDate      DateTime @default(now()) @map("purchase_date")
+  totalAmount       Decimal  @map("total_amount") @db.Decimal(14, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
 
   company Company        @relation(fields: [companyId], references: [id])
   party   Party          @relation(fields: [partyId], references: [id])
@@ -584,16 +587,16 @@ model ProductionRun {
 }
 
 model RunInput {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId       String   @map("run_id") @db.Uuid
-  itemId      String   @map("item_id") @db.Uuid
-  stdQty      Decimal  @map("std_qty") @db.Decimal(14, 4)
-  actualQty   Decimal  @map("actual_qty") @db.Decimal(14, 4)
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String  @map("run_id") @db.Uuid
+  itemId      String  @map("item_id") @db.Uuid
+  stdQty      Decimal @map("std_qty") @db.Decimal(14, 4)
+  actualQty   Decimal @map("actual_qty") @db.Decimal(14, 4)
   uom         String
-  unitCost    Decimal  @map("unit_cost") @db.Decimal(14, 6)
-  value       Decimal  @db.Decimal(14, 2)
-  variancePct Decimal  @map("variance_pct") @db.Decimal(6, 2)
-  flagged     Boolean  @default(false)
+  unitCost    Decimal @map("unit_cost") @db.Decimal(14, 6)
+  value       Decimal @db.Decimal(14, 2)
+  variancePct Decimal @map("variance_pct") @db.Decimal(6, 2)
+  flagged     Boolean @default(false)
 
   run  ProductionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   item Item          @relation(fields: [itemId], references: [id])
@@ -602,12 +605,12 @@ model RunInput {
 }
 
 model RunOutput {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId       String   @map("run_id") @db.Uuid
-  fgItemId    String   @map("fg_item_id") @db.Uuid
-  expectedQty Decimal  @map("expected_qty") @db.Decimal(14, 4)
-  goodQty     Decimal  @map("good_qty") @db.Decimal(14, 4)
-  batchId     String?  @map("batch_id") @db.Uuid
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String  @map("run_id") @db.Uuid
+  fgItemId    String  @map("fg_item_id") @db.Uuid
+  expectedQty Decimal @map("expected_qty") @db.Decimal(14, 4)
+  goodQty     Decimal @map("good_qty") @db.Decimal(14, 4)
+  batchId     String? @map("batch_id") @db.Uuid
 
   run    ProductionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   fgItem Item          @relation("FgOutputItem", fields: [fgItemId], references: [id])
@@ -617,12 +620,12 @@ model RunOutput {
 }
 
 model RunWastage {
-  id      String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId   String        @map("run_id") @db.Uuid
-  itemId  String        @map("item_id") @db.Uuid
-  qty     Decimal       @db.Decimal(14, 4)
-  uom     String
-  reason  WastageReason
+  id     String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId  String        @map("run_id") @db.Uuid
+  itemId String        @map("item_id") @db.Uuid
+  qty    Decimal       @db.Decimal(14, 4)
+  uom    String
+  reason WastageReason
 
   run  ProductionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   item Item          @relation(fields: [itemId], references: [id])
@@ -631,13 +634,13 @@ model RunWastage {
 }
 
 model OverheadEntry {
-  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId String        @map("company_id") @db.Uuid
-  runId     String?       @map("run_id") @db.Uuid
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId String       @map("company_id") @db.Uuid
+  runId     String?      @map("run_id") @db.Uuid
   type      OverheadType
-  amount    Decimal       @db.Decimal(14, 2)
+  amount    Decimal      @db.Decimal(14, 2)
   period    String?
-  createdAt DateTime      @default(now()) @map("created_at")
+  createdAt DateTime     @default(now()) @map("created_at")
 
   company Company        @relation(fields: [companyId], references: [id])
   run     ProductionRun? @relation(fields: [runId], references: [id])
@@ -646,14 +649,14 @@ model OverheadEntry {
 }
 
 model StockBatch {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId   String    @map("company_id") @db.Uuid
-  itemId      String    @map("item_id") @db.Uuid
-  batchNo     String    @map("batch_no")
-  mfgDate     DateTime  @default(now()) @map("mfg_date")
-  expiryDate  DateTime? @map("expiry_date")
-  unitCost    Decimal   @map("unit_cost") @db.Decimal(14, 6)
-  createdAt   DateTime  @default(now()) @map("created_at")
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId  String    @map("company_id") @db.Uuid
+  itemId     String    @map("item_id") @db.Uuid
+  batchNo    String    @map("batch_no")
+  mfgDate    DateTime  @default(now()) @map("mfg_date")
+  expiryDate DateTime? @map("expiry_date")
+  unitCost   Decimal   @map("unit_cost") @db.Decimal(14, 6)
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   company       Company        @relation(fields: [companyId], references: [id])
   item          Item           @relation(fields: [itemId], references: [id])
@@ -668,22 +671,22 @@ model StockBatch {
 }
 
 model StockLedger {
-  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId          String       @map("company_id") @db.Uuid
-  itemId             String       @map("item_id") @db.Uuid
-  batchId            String?      @map("batch_id") @db.Uuid
-  txnAt              DateTime     @default(now()) @map("txn_at")
-  qtyIn              Decimal      @default(0) @map("qty_in") @db.Decimal(14, 4)
-  qtyOut             Decimal      @default(0) @map("qty_out") @db.Decimal(14, 4)
-  unitCost           Decimal      @map("unit_cost") @db.Decimal(14, 6)
-  value              Decimal      @db.Decimal(14, 2)
-  balanceQtyAfter    Decimal      @map("balance_qty_after") @db.Decimal(14, 4)
-  balanceValueAfter  Decimal      @map("balance_value_after") @db.Decimal(14, 2)
-  movementType       MovementType @map("movement_type")
-  sourceType         String       @map("source_type")
-  sourceId           String       @map("source_id") @db.Uuid
-  sourceLineId       String?      @map("source_line_id") @db.Uuid
-  createdBy          String?      @map("created_by") @db.Uuid
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId         String       @map("company_id") @db.Uuid
+  itemId            String       @map("item_id") @db.Uuid
+  batchId           String?      @map("batch_id") @db.Uuid
+  txnAt             DateTime     @default(now()) @map("txn_at")
+  qtyIn             Decimal      @default(0) @map("qty_in") @db.Decimal(14, 4)
+  qtyOut            Decimal      @default(0) @map("qty_out") @db.Decimal(14, 4)
+  unitCost          Decimal      @map("unit_cost") @db.Decimal(14, 6)
+  value             Decimal      @db.Decimal(14, 2)
+  balanceQtyAfter   Decimal      @map("balance_qty_after") @db.Decimal(14, 4)
+  balanceValueAfter Decimal      @map("balance_value_after") @db.Decimal(14, 2)
+  movementType      MovementType @map("movement_type")
+  sourceType        String       @map("source_type")
+  sourceId          String       @map("source_id") @db.Uuid
+  sourceLineId      String?      @map("source_line_id") @db.Uuid
+  createdBy         String?      @map("created_by") @db.Uuid
 
   company Company     @relation(fields: [companyId], references: [id])
   item    Item        @relation(fields: [itemId], references: [id])
@@ -755,4 +758,37 @@ model RefreshToken {
 
   @@index([familyId])
   @@map("refresh_token")
+}
+
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model RetailerApplication {
+  id              String            @id @default(uuid()) @db.Uuid
+  companyId       String            @map("company_id") @db.Uuid
+  salesmanId      String            @map("salesman_id") @db.Uuid
+  storeName       String            @map("store_name")
+  contactPerson   String            @map("contact_person")
+  phone           String
+  address         String
+  stateCode       String            @default("33") @map("state_code")
+  gstin           String?
+  geoLat          Decimal?          @map("geo_lat") @db.Decimal(10, 6)
+  geoLng          Decimal?          @map("geo_lng") @db.Decimal(10, 6)
+  status          ApplicationStatus @default(PENDING)
+  rejectionReason String?           @map("rejection_reason")
+  createdPartyId  String?           @map("created_party_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  company  Company @relation(fields: [companyId], references: [id])
+  salesman User    @relation(fields: [salesmanId], references: [id])
+  party    Party?  @relation(fields: [createdPartyId], references: [id])
+
+  @@index([companyId, status])
+  @@index([salesmanId])
+  @@map("retailer_application")
 }
