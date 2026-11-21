@@ -26,6 +26,7 @@ async function main() {
   } else if (cmd === 'stop') {
     await pg.stop();
     console.log('Embedded PostgreSQL stopped.');
+    process.exit(0);
   }
 }
 
