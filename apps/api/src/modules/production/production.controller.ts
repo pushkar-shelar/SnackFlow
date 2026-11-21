@@ -2,11 +2,35 @@ import { Controller, Post, Get, Param, Body, Inject } from '@nestjs/common';
 import { ProductionService } from './production.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
-import { Permission } from '@snackflow/shared';
+import {
+  Permission,
+  CreateQcCheckpointSchema,
+  CreateQcCheckpointDto,
+} from '@snackflow/shared';
+import { ZodValidationPipe } from '../../core/pipes/zod-validation.pipe.js';
 
 @Controller('production/runs')
 export class ProductionController {
   constructor(@Inject(ProductionService) private readonly productionService: ProductionService) {}
+
+  @RequirePermission(Permission.PRODUCTION_RUN)
+  @Post(':id/qc')
+  async recordQc(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(CreateQcCheckpointSchema)) dto: CreateQcCheckpointDto,
+  ) {
+    return this.productionService.recordQcCheckpoint(user.companyId, id, user.userId, dto);
+  }
+
+  @RequirePermission(Permission.PRODUCTION_RUN, Permission.REPORT_READ)
+  @Get(':id/qc')
+  async getQc(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.productionService.getQcCheckpoint(user.companyId, id);
+  }
 
   @RequirePermission(Permission.PRODUCTION_RUN)
   @Post('draft')

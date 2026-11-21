@@ -130,6 +130,9 @@ model Company {
   documentSequences    DocumentSequence[]
   stockReservations    StockReservation[]
   retailerApplications RetailerApplication[]
+  qcCheckpoints        QcCheckpoint[]
+  equipment            Equipment[]
+  equipmentDowntimes   EquipmentDowntime[]
 
   @@map("company")
 }
@@ -149,6 +152,8 @@ model User {
   salesOrders          SalesOrder[]          @relation("SalesmanOrders")
   refreshTokens        RefreshToken[]
   retailerApplications RetailerApplication[]
+  qcCheckpoints        QcCheckpoint[]
+  equipmentDowntimes   EquipmentDowntime[]
 
   @@map("user")
 }
@@ -576,12 +581,14 @@ model ProductionRun {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   version     Int       @default(1)
 
-  company   Company         @relation(fields: [companyId], references: [id])
-  recipe    Recipe          @relation(fields: [recipeId], references: [id])
-  inputs    RunInput[]
-  outputs   RunOutput[]
-  wastages  RunWastage[]
-  overheads OverheadEntry[]
+  company            Company             @relation(fields: [companyId], references: [id])
+  recipe             Recipe              @relation(fields: [recipeId], references: [id])
+  inputs             RunInput[]
+  outputs            RunOutput[]
+  wastages           RunWastage[]
+  overheads          OverheadEntry[]
+  qcCheckpoint       QcCheckpoint?
+  equipmentDowntimes EquipmentDowntime[]
 
   @@map("production_run")
 }
@@ -791,4 +798,86 @@ model RetailerApplication {
   @@index([companyId, status])
   @@index([salesmanId])
   @@map("retailer_application")
+}
+
+enum EquipmentStatus {
+  OPERATIONAL
+  UNDER_MAINTENANCE
+  BREAKDOWN
+  STANDBY
+}
+
+enum DowntimeCategory {
+  BREAKDOWN
+  PREVENTIVE_MAINTENANCE
+  CLEANING_SANITATION
+  POWER_OUTAGE
+  SETUP_CHANGEOVER
+}
+
+model QcCheckpoint {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  runId           String   @unique @map("run_id") @db.Uuid
+  inspectorId     String   @map("inspector_id") @db.Uuid
+  moisturePct     Decimal  @map("moisture_pct") @db.Decimal(5, 2)
+  peroxideValue   Decimal? @map("peroxide_value") @db.Decimal(5, 2)
+  tasteCrunchTest Boolean  @default(false) @map("taste_crunch_test")
+  sealIntegrity   Boolean  @default(false) @map("seal_integrity")
+  packageWeightG  Decimal  @map("package_weight_g") @db.Decimal(8, 2)
+  isApproved      Boolean  @default(false) @map("is_approved")
+  remarks         String?
+  inspectedAt     DateTime @default(now()) @map("inspected_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company       @relation(fields: [companyId], references: [id])
+  run       ProductionRun @relation(fields: [runId], references: [id])
+  inspector User          @relation(fields: [inspectorId], references: [id])
+
+  @@map("qc_checkpoint")
+}
+
+model Equipment {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId           String          @map("company_id") @db.Uuid
+  code                String
+  name                String
+  type                String
+  status              EquipmentStatus @default(OPERATIONAL)
+  healthScore         Int             @default(100) @map("health_score")
+  totalOperatingHours Decimal         @default(0) @map("total_operating_hours") @db.Decimal(10, 2)
+  lastServicedAt      DateTime?       @map("last_serviced_at")
+  nextMaintenanceDue  DateTime?       @map("next_maintenance_due")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  company   Company             @relation(fields: [companyId], references: [id])
+  downtimes EquipmentDowntime[]
+
+  @@unique([companyId, code])
+  @@map("equipment")
+}
+
+model EquipmentDowntime {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String           @map("company_id") @db.Uuid
+  equipmentId     String           @map("equipment_id") @db.Uuid
+  runId           String?          @map("run_id") @db.Uuid
+  category        DowntimeCategory @default(BREAKDOWN)
+  reason          String
+  startTime       DateTime         @default(now()) @map("start_time")
+  endTime         DateTime?        @map("end_time")
+  durationMinutes Int?             @map("duration_minutes")
+  loggedById      String           @map("logged_by_id") @db.Uuid
+  resolutionNotes String?          @map("resolution_notes")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  company   Company        @relation(fields: [companyId], references: [id])
+  equipment Equipment      @relation(fields: [equipmentId], references: [id])
+  run       ProductionRun? @relation(fields: [runId], references: [id])
+  loggedBy  User           @relation(fields: [loggedById], references: [id])
+
+  @@index([companyId, equipmentId])
+  @@map("equipment_downtime")
 }

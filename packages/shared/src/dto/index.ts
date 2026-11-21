@@ -144,3 +144,29 @@ export const ApproveRetailerApplicationSchema = z.object({
   priceListId: z.string().uuid().optional(),
 });
 export type ApproveRetailerApplicationDto = z.infer<typeof ApproveRetailerApplicationSchema>;
+
+export const CreateQcCheckpointSchema = z.object({
+  moisturePct: z.number().min(0).max(20),
+  peroxideValue: z.number().min(0).optional(),
+  tasteCrunchTest: z.boolean().default(false),
+  sealIntegrity: z.boolean().default(false),
+  packageWeightG: z.number().min(10).max(5000),
+  remarks: z.string().optional(),
+  isApproved: z.boolean().default(false),
+});
+export type CreateQcCheckpointDto = z.infer<typeof CreateQcCheckpointSchema>;
+
+export const LogEquipmentDowntimeSchema = z.object({
+  equipmentId: z.string().uuid(),
+  runId: z.string().uuid().optional(),
+  category: z.enum(['BREAKDOWN', 'PREVENTIVE_MAINTENANCE', 'CLEANING_SANITATION', 'POWER_OUTAGE', 'SETUP_CHANGEOVER']).default('BREAKDOWN'),
+  reason: z.string().min(3, 'Reason is required'),
+  startTime: z.string().optional(),
+});
+export type LogEquipmentDowntimeDto = z.infer<typeof LogEquipmentDowntimeSchema>;
+
+export const ResolveEquipmentDowntimeSchema = z.object({
+  resolutionNotes: z.string().min(3, 'Resolution notes are required'),
+  durationMinutes: z.number().positive().optional(),
+});
+export type ResolveEquipmentDowntimeDto = z.infer<typeof ResolveEquipmentDowntimeSchema>;

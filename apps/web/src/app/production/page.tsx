@@ -14,9 +14,17 @@ import {
   Package,
   RefreshCw,
   Coins,
+  ShieldCheck,
+  Activity,
+  Wrench,
+  Clock,
+  Check,
+  X,
+  ShieldAlert,
 } from 'lucide-react';
 
 export default function ProductionWizardPage() {
+  const [activeMainTab, setActiveMainTab] = useState<'WIZARD' | 'EQUIPMENT'>('WIZARD');
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [_recipes, setRecipes] = useState<any[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<any | null>(null);
@@ -36,6 +44,26 @@ export default function ProductionWizardPage() {
   const [damagedPouchesQty, setDamagedPouchesQty] = useState<number>(6);
   const [cartonsUsedQty, setCartonsUsedQty] = useState<number>(9);
 
+  // Quality Control (QC) Gate Checkpoint State
+  const [qcMoisture, setQcMoisture] = useState<number>(2.1);
+  const [qcPeroxide, setQcPeroxide] = useState<number>(3.2);
+  const [qcTasteCrunch, setQcTasteCrunch] = useState<boolean>(true);
+  const [qcSealIntegrity, setQcSealIntegrity] = useState<boolean>(true);
+  const [qcWeight, setQcWeight] = useState<number>(201.5);
+  const [qcRemarks, setQcRemarks] = useState<string>('Sensory crunch passed, authentic aroma, vacuum seal airtight');
+  const [qcApproved, setQcApproved] = useState<boolean>(true);
+  const [isRecordingQc, setIsRecordingQc] = useState<boolean>(false);
+
+  // Equipment & Downtime Tracking State
+  const [equipmentList, setEquipmentList] = useState<any[]>([]);
+  const [downtimeModalOpen, setDowntimeModalOpen] = useState<boolean>(false);
+  const [selectedEquipmentId, setSelectedEquipmentId] = useState<string>('');
+  const [downtimeCategory, setDowntimeCategory] = useState<string>('BREAKDOWN');
+  const [downtimeReason, setDowntimeReason] = useState<string>('');
+  const [isLoggingDowntime, setIsLoggingDowntime] = useState<boolean>(false);
+  const [resolvingDowntimeId, setResolvingDowntimeId] = useState<string | null>(null);
+  const [resolutionNotes, setResolutionNotes] = useState<string>('');
+
   // Step 3: Posting & Close-out
   const [isPosting, setIsPosting] = useState<boolean>(false);
   const [_postedResult, setPostedResult] = useState<any | null>(null);
@@ -47,7 +75,94 @@ export default function ProductionWizardPage() {
 
   useEffect(() => {
     loadRecipesAndFg();
+    loadEquipment();
   }, []);
+
+  const loadEquipment = async () => {
+    try {
+      const data = await apiFetch<any[]>('/production/equipment');
+      setEquipmentList(data);
+      if (data.length > 0 && !selectedEquipmentId) {
+        setSelectedEquipmentId(data[0].id);
+      }
+    } catch (e) {
+      console.warn('Could not load equipment', e);
+    }
+  };
+
+  const handleSaveQc = async () => {
+    const isCompliant = qcTasteCrunch && qcSealIntegrity && qcMoisture <= 3.0;
+    if (!draftRun) {
+      setQcApproved(isCompliant);
+      alert(isCompliant ? 'QC Parameters validated and approved!' : 'Moisture must be <= 3.0% and taste/seal tests must pass.');
+      return;
+    }
+    setIsRecordingQc(true);
+    try {
+      await apiFetch(`/production/runs/${draftRun.id}/qc`, {
+        method: 'POST',
+        body: JSON.stringify({
+          moisturePct: Number(qcMoisture),
+          peroxideValue: Number(qcPeroxide),
+          tasteCrunchTest: Boolean(qcTasteCrunch),
+          sealIntegrity: Boolean(qcSealIntegrity),
+          packageWeightG: Number(qcWeight),
+          remarks: qcRemarks,
+          isApproved: isCompliant,
+        }),
+      });
+      setQcApproved(isCompliant);
+      alert('QC Checkpoint recorded & signed off successfully!');
+    } catch (e: any) {
+      alert(`QC error: ${e.message}`);
+    } finally {
+      setIsRecordingQc(false);
+    }
+  };
+
+  const handleLogDowntime = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEquipmentId || !downtimeReason) return;
+    setIsLoggingDowntime(true);
+    try {
+      await apiFetch('/production/equipment/downtime', {
+        method: 'POST',
+        body: JSON.stringify({
+          equipmentId: selectedEquipmentId,
+          runId: draftRun?.id || undefined,
+          category: downtimeCategory,
+          reason: downtimeReason,
+        }),
+      });
+      alert('Machinery downtime logged! Maintenance team notified.');
+      setDowntimeReason('');
+      setDowntimeModalOpen(false);
+      loadEquipment();
+    } catch (e: any) {
+      alert(`Downtime logging error: ${e.message}`);
+    } finally {
+      setIsLoggingDowntime(false);
+    }
+  };
+
+  const handleResolveDowntime = async (downtimeId: string) => {
+    if (!resolutionNotes) {
+      alert('Please enter resolution notes describing the repair/maintenance performed.');
+      return;
+    }
+    try {
+      await apiFetch(`/production/equipment/downtime/${downtimeId}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ resolutionNotes }),
+      });
+      alert('Equipment restored to OPERATIONAL status!');
+      setResolvingDowntimeId(null);
+      setResolutionNotes('');
+      loadEquipment();
+    } catch (e: any) {
+      alert(`Resolution error: ${e.message}`);
+    }
+  };
 
   const loadRecipesAndFg = async () => {
     try {
@@ -112,8 +227,27 @@ export default function ProductionWizardPage() {
 
   const handlePostRun = async () => {
     if (!draftRun) return;
+    if (!qcApproved) {
+      alert('Mandatory Quality Control (QC) Gate must be inspected and approved before posting production run.');
+      return;
+    }
     setIsPosting(true);
     try {
+      // 1. Ensure QC is recorded & signed off before post
+      await apiFetch(`/production/runs/${draftRun.id}/qc`, {
+        method: 'POST',
+        body: JSON.stringify({
+          moisturePct: Number(qcMoisture),
+          peroxideValue: Number(qcPeroxide),
+          tasteCrunchTest: Boolean(qcTasteCrunch),
+          sealIntegrity: Boolean(qcSealIntegrity),
+          packageWeightG: Number(qcWeight),
+          remarks: qcRemarks,
+          isApproved: true,
+        }),
+      });
+
+      // 2. Post the production run
       const payload = {
         actualInputs: Object.entries(actualInputs).map(([itemId, actualQty]) => ({
           itemId,
@@ -172,7 +306,7 @@ export default function ProductionWizardPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Wizard Header */}
-      <div className="text-center mb-8">
+      <div className="text-center mb-6">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold mb-2">
           <Factory className="w-4 h-4 text-amber-600" />
           Production Floor Tablet Interface
@@ -181,17 +315,46 @@ export default function ProductionWizardPage() {
           Production Run Wizard • உற்பத்தி பதிவு
         </h1>
         <p className="text-xs text-stone-500 max-w-md mx-auto mt-1">
-          Issue raw materials, record packaged output & wastage, and verify live variances against recipes.
+          Issue raw materials, inspect mandatory QC checkpoints, record batch yields, and track machine health.
         </p>
       </div>
 
-      {/* 3-Step Wizard Navigation Indicator */}
-      <div className="flex items-center justify-center gap-2 sm:gap-4 mb-8">
-        {[
-          { num: 1, label: 'Issue Materials' },
-          { num: 2, label: 'Output & Waste' },
-          { num: 3, label: 'Variance & Post' },
-        ].map((s) => (
+      {/* Top View Switcher Pill */}
+      <div className="flex justify-center mb-8">
+        <div className="inline-flex bg-stone-100 p-1 rounded-2xl border border-stone-200 text-xs font-semibold shadow-xs">
+          <button
+            onClick={() => setActiveMainTab('WIZARD')}
+            className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
+              activeMainTab === 'WIZARD' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Factory className="w-4 h-4 text-amber-600" />
+            <span>Batch Run Wizard</span>
+          </button>
+          <button
+            onClick={() => setActiveMainTab('EQUIPMENT')}
+            className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
+              activeMainTab === 'EQUIPMENT' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Wrench className="w-4 h-4 text-amber-600" />
+            <span>Machinery Health & Downtime</span>
+            <span className="bg-stone-200 text-stone-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
+              {equipmentList.length}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {activeMainTab === 'WIZARD' ? (
+        <>
+          {/* 3-Step Wizard Navigation Indicator */}
+          <div className="flex items-center justify-center gap-2 sm:gap-4 mb-8">
+            {[
+              { num: 1, label: 'Issue Materials' },
+              { num: 2, label: 'Output & Waste' },
+              { num: 3, label: 'Variance & QC Post' },
+            ].map((s) => (
           <div key={s.num} className="flex items-center gap-2">
             <div
               className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs transition-all ${
@@ -453,6 +616,120 @@ export default function ProductionWizardPage() {
               </div>
             </div>
 
+            {/* Mandatory Quality Control (QC) Pre-Posting Approval Gate */}
+            <div
+              className={`p-5 rounded-2xl border-2 transition-all space-y-4 ${
+                qcApproved ? 'bg-emerald-50/40 border-emerald-300' : 'bg-amber-50/60 border-amber-300'
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck className={`w-5 h-5 shrink-0 ${qcApproved ? 'text-emerald-600' : 'text-amber-600'}`} />
+                  <div>
+                    <h3 className="text-sm font-bold text-stone-900">
+                      Mandatory Quality Control (QC) Checkpoint Gate
+                    </h3>
+                    <p className="text-[11px] text-stone-500">
+                      Sensory taste &amp; crunch test, moisture &le; 3.0%, and vacuum seal integrity required prior to posting.
+                    </p>
+                  </div>
+                </div>
+                <span
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-full self-start sm:self-auto ${
+                    qcApproved ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {qcApproved ? '✓ QC Gate Approved' : '⏳ Signoff Required'}
+                </span>
+              </div>
+
+              {/* QC Parameters Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                {/* Taste & Crunch Sensory */}
+                <div className="p-3 bg-white rounded-xl border border-stone-200 space-y-1.5 shadow-xs">
+                  <div className="text-[10px] font-bold uppercase text-stone-500">Taste &amp; Crunch Test</div>
+                  <label className="flex items-center gap-2 cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={qcTasteCrunch}
+                      onChange={(e) => setQcTasteCrunch(e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                    />
+                    <span className="font-semibold text-stone-800">
+                      {qcTasteCrunch ? 'Crisp & Authentic (Pass)' : 'Fail'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Seal Integrity */}
+                <div className="p-3 bg-white rounded-xl border border-stone-200 space-y-1.5 shadow-xs">
+                  <div className="text-[10px] font-bold uppercase text-stone-500">Package Seal Integrity</div>
+                  <label className="flex items-center gap-2 cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={qcSealIntegrity}
+                      onChange={(e) => setQcSealIntegrity(e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                    />
+                    <span className="font-semibold text-stone-800">
+                      {qcSealIntegrity ? 'Airtight Vacuum (Pass)' : 'Air Leak (Fail)'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Moisture % */}
+                <div className="p-3 bg-white rounded-xl border border-stone-200 space-y-1 shadow-xs">
+                  <div className="flex items-center justify-between text-[10px] font-bold uppercase text-stone-500">
+                    <span>Moisture Level (%)</span>
+                    <span className={qcMoisture <= 3.0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
+                      {qcMoisture <= 3.0 ? '≤ 3.0% OK' : '> 3.0% High!'}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    max={10}
+                    value={qcMoisture}
+                    onChange={(e) => setQcMoisture(Number(e.target.value))}
+                    className="w-full px-2 py-1 rounded-lg border border-stone-200 text-xs font-bold"
+                  />
+                  <div className="text-[9px] text-stone-400">Standard: ≤ 3.0% for shelf life</div>
+                </div>
+
+                {/* Package Net Weight */}
+                <div className="p-3 bg-white rounded-xl border border-stone-200 space-y-1 shadow-xs">
+                  <div className="text-[10px] font-bold uppercase text-stone-500">Net Weight (g)</div>
+                  <input
+                    type="number"
+                    step={0.5}
+                    value={qcWeight}
+                    onChange={(e) => setQcWeight(Number(e.target.value))}
+                    className="w-full px-2 py-1 rounded-lg border border-stone-200 text-xs font-bold"
+                  />
+                  <div className="text-[9px] text-stone-400">Target: 200g &plusmn; 3g tolerance</div>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-1">
+                <input
+                  type="text"
+                  placeholder="Inspector remarks &amp; aroma notes..."
+                  value={qcRemarks}
+                  onChange={(e) => setQcRemarks(e.target.value)}
+                  className="flex-1 text-xs px-3 py-2 rounded-xl border border-stone-200 bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveQc}
+                  disabled={isRecordingQc}
+                  className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all shrink-0"
+                >
+                  {isRecordingQc ? 'Recording...' : 'Signoff QC Checkpoint'}
+                </button>
+              </div>
+            </div>
+
             {/* Posting Notice */}
             <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
               <div className="font-bold flex items-center gap-1.5">
@@ -476,11 +753,15 @@ export default function ProductionWizardPage() {
               </button>
               <button
                 onClick={handlePostRun}
-                disabled={isPosting}
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs px-6 py-3 rounded-xl shadow-md shadow-emerald-600/25 transition-all"
+                disabled={isPosting || !qcApproved}
+                className={`flex items-center gap-2 active:scale-95 text-white font-bold text-xs px-6 py-3 rounded-xl shadow-md transition-all ${
+                  !qcApproved
+                    ? 'bg-stone-300 cursor-not-allowed text-stone-500 shadow-none'
+                    : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/25'
+                }`}
               >
                 {isPosting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Confirm & Post Production Run
+                {qcApproved ? 'Confirm & Post Production Run' : 'QC Signoff Required to Post'}
               </button>
             </div>
           </div>
@@ -565,6 +846,262 @@ export default function ProductionWizardPage() {
           </div>
         )}
       </div>
+      </>
+      ) : (
+        /* Machinery Health & Equipment Downtime Management */
+        <div className="space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-stone-200">
+            <div>
+              <h2 className="text-lg font-bold text-stone-900 flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-amber-600" />
+                Critical Machinery & Equipment Fleet
+              </h2>
+              <p className="text-xs text-stone-500">
+                Track real-time health, operating hours, and log maintenance or breakdown halts to prevent shop-floor stockouts.
+              </p>
+            </div>
+            <button
+              onClick={() => setDowntimeModalOpen(true)}
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              Log Machine Downtime
+            </button>
+          </div>
+
+          {/* Machinery Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {equipmentList.map((eq) => {
+              const isOperational = eq.status === 'OPERATIONAL';
+              const isBreakdown = eq.status === 'BREAKDOWN';
+
+              return (
+                <div
+                  key={eq.id}
+                  className={`bg-white rounded-2xl border p-5 shadow-xs space-y-3.5 transition-all ${
+                    isBreakdown ? 'border-rose-300 ring-1 ring-rose-400/20' : 'border-stone-200'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-stone-400 bg-stone-100 px-2 py-0.5 rounded-md">
+                          {eq.code}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isOperational
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : isBreakdown
+                              ? 'bg-rose-100 text-rose-800 animate-pulse'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {eq.status}
+                        </span>
+                      </div>
+                      <h3 className="font-bold text-sm text-stone-900 mt-1">{eq.name}</h3>
+                      <div className="text-[11px] text-stone-500">Category: {eq.type}</div>
+                    </div>
+                  </div>
+
+                  {/* Health Score Bar */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-semibold">
+                      <span className="text-stone-500">Equipment Health Index</span>
+                      <span
+                        className={
+                          eq.healthScore >= 85
+                            ? 'text-emerald-700'
+                            : eq.healthScore >= 60
+                            ? 'text-amber-700'
+                            : 'text-rose-700'
+                        }
+                      >
+                        {eq.healthScore}%
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          eq.healthScore >= 85
+                            ? 'bg-emerald-500'
+                            : eq.healthScore >= 60
+                            ? 'bg-amber-500'
+                            : 'bg-rose-500'
+                        }`}
+                        style={{ width: `${eq.healthScore}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-100 text-xs">
+                    <div>
+                      <span className="text-stone-400 text-[10px] uppercase font-bold block">Operating Hours</span>
+                      <span className="font-mono font-bold text-stone-800">{Number(eq.totalOperatingHours).toFixed(1)} hrs</span>
+                    </div>
+                    <div>
+                      <span className="text-stone-400 text-[10px] uppercase font-bold block">Next Service Due</span>
+                      <span className="font-bold text-stone-800">
+                        {eq.nextMaintenanceDue ? new Date(eq.nextMaintenanceDue).toLocaleDateString() : 'Dec 2026'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Recent downtime if any */}
+                  {eq.downtimes && eq.downtimes.length > 0 && (
+                    <div className="pt-2 border-t border-stone-100 space-y-1.5">
+                      <div className="text-[10px] font-bold uppercase text-stone-400">Latest Event Log</div>
+                      {eq.downtimes.slice(0, 1).map((dt: any) => (
+                        <div key={dt.id} className="p-2 rounded-lg bg-stone-50 text-[11px] flex items-center justify-between">
+                          <div>
+                            <span className="font-semibold text-stone-900">{dt.category}</span>: {dt.reason}
+                          </div>
+                          {!dt.endTime ? (
+                            <button
+                              onClick={() => {
+                                setResolvingDowntimeId(dt.id);
+                                setResolutionNotes('Machine inspected and repaired by technician. Test run passed.');
+                              }}
+                              className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-0.5 rounded-md shadow-xs"
+                            >
+                              Resolve
+                            </button>
+                          ) : (
+                            <span className="text-stone-500 text-[10px]">
+                              {dt.durationMinutes ? `${dt.durationMinutes}m` : 'Resolved'}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Downtime Resolution Modal / Box */}
+          {resolvingDowntimeId && (
+            <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-white max-w-md w-full rounded-2xl p-6 shadow-2xl border border-stone-200 space-y-4">
+                <h3 className="font-bold text-stone-900 text-sm flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-emerald-600" />
+                  Resolve Machine Downtime & Restore Health
+                </h3>
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                    Technician Resolution Notes *
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={resolutionNotes}
+                    onChange={(e) => setResolutionNotes(e.target.value)}
+                    placeholder="Describe maintenance or parts replaced..."
+                    className="w-full text-xs p-3 rounded-xl border border-stone-200 focus:outline-emerald-600"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setResolvingDowntimeId(null)}
+                    className="text-xs font-semibold text-stone-600 px-3 py-1.5 rounded-lg hover:bg-stone-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleResolveDowntime(resolvingDowntimeId)}
+                    className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl shadow-xs"
+                  >
+                    Restore Machine Operational
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Log Downtime Modal */}
+          {downtimeModalOpen && (
+            <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <form onSubmit={handleLogDowntime} className="bg-white max-w-md w-full rounded-2xl p-6 shadow-2xl border border-stone-200 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+                  <h3 className="font-bold text-stone-900 text-sm flex items-center gap-2 text-rose-700">
+                    <AlertTriangle className="w-4 h-4" />
+                    Log Equipment Breakdown / Downtime
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setDowntimeModalOpen(false)}
+                    className="text-stone-400 hover:text-stone-600 text-xs font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">Select Machinery *</label>
+                  <select
+                    value={selectedEquipmentId}
+                    onChange={(e) => setSelectedEquipmentId(e.target.value)}
+                    className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
+                  >
+                    {equipmentList.map((eq) => (
+                      <option key={eq.id} value={eq.id}>
+                        {eq.code} — {eq.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">Downtime Category *</label>
+                  <select
+                    value={downtimeCategory}
+                    onChange={(e) => setDowntimeCategory(e.target.value)}
+                    className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
+                  >
+                    <option value="BREAKDOWN">Unscheduled Mechanical Breakdown</option>
+                    <option value="PREVENTIVE_MAINTENANCE">Scheduled Preventive Maintenance</option>
+                    <option value="CLEANING_SANITATION">Batch Cleaning & Sanitation</option>
+                    <option value="POWER_OUTAGE">Power Outage / Grid Failure</option>
+                    <option value="SETUP_CHANGEOVER">Dough Extruder Die Changeover</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">Root Cause & Observations *</label>
+                  <textarea
+                    required
+                    rows={3}
+                    placeholder="e.g. Heating element temp dropped to 140°C, thermostat tripped..."
+                    value={downtimeReason}
+                    onChange={(e) => setDowntimeReason(e.target.value)}
+                    className="w-full text-xs p-3 rounded-xl border border-stone-200 focus:outline-rose-600"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDowntimeModalOpen(false)}
+                    className="text-xs font-semibold text-stone-600 px-3 py-1.5 rounded-lg hover:bg-stone-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isLoggingDowntime}
+                    className="text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl shadow-xs"
+                  >
+                    {isLoggingDowntime ? 'Logging...' : 'Report Downtime'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

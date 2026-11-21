@@ -333,6 +333,32 @@ async function main() {
 
   await upsertStockBalance(company.id, fgMurukku.id, openingBatch.id, 50.0, 992.5, 19.85);
 
+  // 11. Machinery & Equipment Master Data
+  const defaultMachinery = [
+    { code: 'EQ-MIXER-01', name: 'Dough Kneader & Flour Blender 50kg', type: 'MIXER', healthScore: 96, operatingHours: 1420.5 },
+    { code: 'EQ-EXTRUDER-01', name: 'Traditional Murukku Hydraulic Press / Extruder', type: 'EXTRUDER', healthScore: 92, operatingHours: 1850.0 },
+    { code: 'EQ-FRYER-01', name: 'Continuous Gas Deep Fryer with Heat Exchanger', type: 'FRYER', healthScore: 88, operatingHours: 2110.0 },
+    { code: 'EQ-SEALER-01', name: 'Continuous Band Nitrogen Flushing Pouch Sealer', type: 'SEALER', healthScore: 95, operatingHours: 1675.0 },
+  ];
+
+  for (const m of defaultMachinery) {
+    await prisma.equipment.upsert({
+      where: { companyId_code: { companyId: company.id, code: m.code } },
+      update: {},
+      create: {
+        companyId: company.id,
+        code: m.code,
+        name: m.name,
+        type: m.type,
+        status: 'OPERATIONAL',
+        healthScore: m.healthScore,
+        totalOperatingHours: m.operatingHours,
+        lastServicedAt: new Date('2026-11-01'),
+        nextMaintenanceDue: new Date('2026-12-01'),
+      },
+    });
+  }
+
   console.log('Seeding completed successfully!');
 }
 
