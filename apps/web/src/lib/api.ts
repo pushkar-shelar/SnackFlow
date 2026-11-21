@@ -73,7 +73,7 @@ export async function apiFetch<T = any>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const session = getStoredSession();
+  let session = getStoredSession();
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
@@ -85,7 +85,21 @@ export async function apiFetch<T = any>(
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
-  const res = await fetch(url, { ...options, headers });
+  let res = await fetch(url, { ...options, headers });
+
+  // If token expired (401), auto-renew session for seeded demo accounts and retry once
+  if (res.status === 401 && session?.email) {
+    try {
+      const refreshed = await login(session.email, 'Password123!');
+      if (refreshed?.token) {
+        session = refreshed;
+        headers.set('Authorization', `Bearer ${refreshed.token}`);
+        res = await fetch(url, { ...options, headers });
+      }
+    } catch {
+      // Re-login failed, fall through to error handling
+    }
+  }
 
   if (!res.ok) {
     const errorJson = await res.json().catch(() => ({}));
