@@ -56,6 +56,8 @@ export default function ProductionWizardPage() {
 
   // Equipment & Downtime Tracking State
   const [equipmentList, setEquipmentList] = useState<any[]>([]);
+  const [isLoadingEquipment, setIsLoadingEquipment] = useState<boolean>(false);
+  const [equipmentError, setEquipmentError] = useState<string | null>(null);
   const [downtimeModalOpen, setDowntimeModalOpen] = useState<boolean>(false);
   const [selectedEquipmentId, setSelectedEquipmentId] = useState<string>('');
   const [downtimeCategory, setDowntimeCategory] = useState<string>('BREAKDOWN');
@@ -76,17 +78,36 @@ export default function ProductionWizardPage() {
   useEffect(() => {
     loadRecipesAndFg();
     loadEquipment();
+
+    const handleStorage = () => {
+      loadEquipment();
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
+  useEffect(() => {
+    if (activeMainTab === 'EQUIPMENT') {
+      loadEquipment();
+    }
+  }, [activeMainTab]);
+
   const loadEquipment = async () => {
+    setIsLoadingEquipment(true);
+    setEquipmentError(null);
     try {
       const data = await apiFetch<any[]>('/production/equipment');
-      setEquipmentList(data);
-      if (data.length > 0 && !selectedEquipmentId) {
-        setSelectedEquipmentId(data[0].id);
+      if (Array.isArray(data)) {
+        setEquipmentList(data);
+        if (data.length > 0) {
+          setSelectedEquipmentId((prev) => prev || data[0].id);
+        }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Could not load equipment', e);
+      setEquipmentError(e.message || 'Failed to fetch equipment');
+    } finally {
+      setIsLoadingEquipment(false);
     }
   };
 
@@ -860,17 +881,53 @@ export default function ProductionWizardPage() {
                 Track real-time health, operating hours, and log maintenance or breakdown halts to prevent shop-floor stockouts.
               </p>
             </div>
-            <button
-              onClick={() => setDowntimeModalOpen(true)}
-              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all"
-            >
-              <AlertTriangle className="w-4 h-4" />
-              Log Machine Downtime
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => loadEquipment()}
+                disabled={isLoadingEquipment}
+                className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs px-3 py-2.5 rounded-xl border border-stone-200 transition-all cursor-pointer"
+                title="Refresh Machinery Fleet"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingEquipment ? 'animate-spin text-amber-600' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (equipmentList.length === 0) loadEquipment();
+                  setDowntimeModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all cursor-pointer"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                Log Machine Downtime
+              </button>
+            </div>
           </div>
 
           {/* Machinery Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {equipmentList.length === 0 ? (
+            <div className="text-center py-12 bg-stone-50 rounded-2xl border border-stone-200 p-8 space-y-3">
+              <Wrench className="w-8 h-8 text-stone-400 mx-auto" />
+              <h3 className="text-sm font-bold text-stone-800">
+                {isLoadingEquipment ? 'Loading machinery fleet...' : 'No machinery found'}
+              </h3>
+              <p className="text-xs text-stone-500 max-w-sm mx-auto">
+                {equipmentError
+                  ? `Notice: ${equipmentError}. Make sure you are logged in as Raman (Production Supervisor).`
+                  : 'Track plant equipment such as dough mixers, hydraulic extruders, continuous fryers, and pouch sealers.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => loadEquipment()}
+                className="text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-xl shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingEquipment ? 'animate-spin' : ''}`} />
+                Reload Machinery Fleet
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {equipmentList.map((eq) => {
               const isOperational = eq.status === 'OPERATIONAL';
               const isBreakdown = eq.status === 'BREAKDOWN';
@@ -980,6 +1037,7 @@ export default function ProductionWizardPage() {
               );
             })}
           </div>
+          )}
 
           {/* Downtime Resolution Modal / Box */}
           {resolvingDowntimeId && (
@@ -1041,17 +1099,31 @@ export default function ProductionWizardPage() {
 
                 <div>
                   <label className="block text-xs font-semibold text-stone-700 mb-1">Select Machinery *</label>
-                  <select
-                    value={selectedEquipmentId}
-                    onChange={(e) => setSelectedEquipmentId(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
-                  >
-                    {equipmentList.map((eq) => (
-                      <option key={eq.id} value={eq.id}>
-                        {eq.code} — {eq.name}
-                      </option>
-                    ))}
-                  </select>
+                  {equipmentList.length === 0 ? (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between">
+                      <span>No machinery loaded. Click reload:</span>
+                      <button
+                        type="button"
+                        onClick={() => loadEquipment()}
+                        className="font-bold underline text-amber-800 hover:text-amber-950 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isLoadingEquipment ? 'animate-spin' : ''}`} />
+                        Reload
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedEquipmentId}
+                      onChange={(e) => setSelectedEquipmentId(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
+                    >
+                      {equipmentList.map((eq) => (
+                        <option key={eq.id} value={eq.id}>
+                          {eq.code} — {eq.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div>
