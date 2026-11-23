@@ -1,0 +1,13 @@
+# Netlify Configuration for SnackFlow Monorepo (Next.js 15 + Turborepo + pnpm)
+
+[build]
+  command = "pnpm --filter @snackflow/shared build && pnpm --filter @snackflow/web build"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  PNPM_FLAGS = "--no-frozen-lockfile"
+
+# Next.js Runtime
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
