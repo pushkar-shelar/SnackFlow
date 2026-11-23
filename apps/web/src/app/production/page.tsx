@@ -475,6 +475,39 @@ export default function ProductionWizardPage() {
 
       {activeMainTab === 'WIZARD' ? (
         <>
+          {/* Stretch Goal: Production Planning from Pending Sales Orders */}
+          <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-50/90 to-indigo-50/70 border border-blue-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-blue-950">
+                    Production Planning from Pending Orders • நிலுவை தேவை திட்டமிடல்
+                  </span>
+                  <span className="text-[10px] bg-blue-200 text-blue-900 font-bold px-2 py-0.5 rounded-full">
+                    NIT-T Stretch Goal
+                  </span>
+                </div>
+                <p className="text-[11px] text-blue-800/80 mt-0.5">
+                  Automated factory recommendation based on live pending customer demand:
+                </p>
+                <div className="flex flex-wrap items-center gap-2.5 mt-2 text-xs text-blue-950 font-semibold">
+                  <span className="bg-white/90 px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
+                    Murukku 200g: <strong>Make 1 batch</strong> (200 PKT yield vs 150 PKT demand)
+                  </span>
+                  <span className="bg-white/90 px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
+                    Ribbon Pakoda: <strong>Make 1 batch</strong> (100 PKT yield to clear 100 PKT stockout)
+                  </span>
+                </div>
+              </div>
+            </div>
+            <span className="text-[10px] text-blue-700 bg-white/80 border border-blue-200 px-3 py-1.5 rounded-xl font-bold self-start md:self-center shrink-0">
+              Auto-calculated from Sales Loop
+            </span>
+          </div>
+
           {/* 3-Step Wizard Navigation Indicator */}
           <div className="flex items-center justify-center gap-2 sm:gap-4 mb-8">
             {[

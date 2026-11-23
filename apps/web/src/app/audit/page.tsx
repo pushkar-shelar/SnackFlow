@@ -48,6 +48,7 @@ export default function AuditorReportsPage() {
     { id: 'stock-ledger', name: 'Stock Movement Ledger (Append-Only Audit)', category: 'Inventory' },
     { id: 'gst-summary', name: 'GST Summary (GSTR-1 / GSTR-3B Split)', category: 'Compliance' },
     { id: 'sales-register', name: 'Sales Register (Invoice-wise Summary)', category: 'Sales' },
+    { id: 'purchase-register', name: 'Purchase Register (Vendor Inward & GRN)', category: 'Procurement' },
     { id: 'production-report', name: 'Production & Yield Variance Report', category: 'Manufacturing' },
     { id: 'costing-comparison', name: 'Costing Sensitivity (WAC vs FIFO)', category: 'Costing' },
     { id: 'ageing-report', name: 'Debtor Receivables Ageing Report', category: 'Finance' },
@@ -331,6 +332,61 @@ export default function AuditorReportsPage() {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {selectedReport === 'purchase-register' && (
+            <div className="overflow-x-auto border border-stone-200 rounded-xl">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-stone-50 text-stone-500 font-bold uppercase text-[10px] border-b border-stone-200">
+                  <tr>
+                    <th className="p-3">GRN / Inward No</th>
+                    <th className="p-3">Vendor</th>
+                    <th className="p-3">Vendor GSTIN</th>
+                    <th className="p-3">Material Inward</th>
+                    <th className="p-3 text-right">Taxable (₹)</th>
+                    <th className="p-3 text-right">CGST (₹)</th>
+                    <th className="p-3 text-right">SGST (₹)</th>
+                    <th className="p-3 text-right">Total (₹)</th>
+                    <th className="p-3 text-center">ITC Eligibility</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100 font-mono">
+                  <tr>
+                    <td className="p-3 font-bold text-stone-900">GRN-2026-0081</td>
+                    <td className="p-3 font-sans font-semibold text-stone-800">Sri Meenakshi Agro Traders</td>
+                    <td className="p-3 text-[11px] text-stone-500">33AAAFM1122C1Z5</td>
+                    <td className="p-3 font-sans">Rice Flour (50.0 KG @ ₹43.125)</td>
+                    <td className="p-3 text-right">₹2,156.25</td>
+                    <td className="p-3 text-right">₹53.91</td>
+                    <td className="p-3 text-right">₹53.91</td>
+                    <td className="p-3 text-right font-bold text-stone-900">₹2,264.07</td>
+                    <td className="p-3 text-center"><span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full font-sans">Eligible GSTR-2B</span></td>
+                  </tr>
+                  <tr>
+                    <td className="p-3 font-bold text-stone-900">GRN-2026-0082</td>
+                    <td className="p-3 font-sans font-semibold text-stone-800">Kaveri Oil Mills Ltd</td>
+                    <td className="p-3 text-[11px] text-stone-500">33AABCK4433D1Z1</td>
+                    <td className="p-3 font-sans">Cooking Oil (30.0 L @ ₹140.00)</td>
+                    <td className="p-3 text-right">₹4,200.00</td>
+                    <td className="p-3 text-right">₹105.00</td>
+                    <td className="p-3 text-right">₹105.00</td>
+                    <td className="p-3 text-right font-bold text-stone-900">₹4,410.00</td>
+                    <td className="p-3 text-center"><span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full font-sans">Eligible GSTR-2B</span></td>
+                  </tr>
+                  <tr>
+                    <td className="p-3 font-bold text-stone-900">GRN-2026-0083</td>
+                    <td className="p-3 font-sans font-semibold text-stone-800">South Packs Polymer Solutions</td>
+                    <td className="p-3 text-[11px] text-stone-500">33AABCS8811K1Z9</td>
+                    <td className="p-3 font-sans">Printed Pouches 200g (500 PCS)</td>
+                    <td className="p-3 text-right">₹1,250.00</td>
+                    <td className="p-3 text-right">₹112.50</td>
+                    <td className="p-3 text-right">₹112.50</td>
+                    <td className="p-3 text-right font-bold text-stone-900">₹1,475.00</td>
+                    <td className="p-3 text-center"><span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full font-sans">Eligible GSTR-2B</span></td>
+                  </tr>
                 </tbody>
               </table>
             </div>
