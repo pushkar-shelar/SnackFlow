@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { db, QueuedOrder } from '@/lib/db';
+import { RbacGate } from '@/components/common/RbacGate';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Store,
@@ -324,7 +325,12 @@ export default function SalesmanPage() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-28">
+    <RbacGate
+      allowedRoles={['SALESMAN', 'ADMIN', 'OWNER']}
+      portalName="Salesman Mobile PWA & Order Pad"
+      requiredPermission="ORDER_CREATE"
+    >
+      <div className="min-h-screen bg-stone-50 pb-28">
       {/* Top Mobile Bar */}
       <div className="max-w-md mx-auto bg-white border-b border-stone-200 px-4 py-3 sticky top-16 z-40">
         <div className="flex items-center justify-between">
@@ -803,5 +809,6 @@ export default function SalesmanPage() {
         </div>
       )}
     </div>
+    </RbacGate>
   );
 }

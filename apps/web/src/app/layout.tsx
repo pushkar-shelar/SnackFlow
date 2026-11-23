@@ -5,7 +5,6 @@ import { Header } from '@/components/common/Header';
 export const metadata: Metadata = {
   title: 'SnackFlow — Order-to-Audit System',
   description: 'Production-grade packaged food manufacturing ERP, inventory ledger, and GST billing',
-  manifest: '/manifest.json',
 };
 
 export default function RootLayout({

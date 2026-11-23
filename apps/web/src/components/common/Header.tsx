@@ -23,6 +23,7 @@ import {
   UserCheck,
   ChevronDown,
   LogOut,
+  Lock,
 } from 'lucide-react';
 
 export function Header() {
@@ -92,12 +93,19 @@ export function Header() {
     router.push('/login');
   };
 
-  const navItems = [
-    { label: 'Salesman (PWA)', path: '/sales', icon: ShoppingBag, role: 'SALESMAN', email: 'salesman@snackflow.local' },
-    { label: 'Admin Inbox', path: '/admin/orders', icon: Inbox, role: 'ADMIN', email: 'admin@snackflow.local' },
-    { label: 'Production Wizard', path: '/production', icon: Factory, role: 'PRODUCTION', email: 'production@snackflow.local' },
-    { label: 'Auditor Reports', path: '/audit', icon: FileCheck2, role: 'AUDITOR', email: 'auditor@snackflow.local' },
-    { label: 'Owner Insights', path: '/owner', icon: PieChart, role: 'OWNER', email: 'owner@snackflow.local' },
+  const navItems: Array<{
+    label: string;
+    path: string;
+    icon: any;
+    role: 'SALESMAN' | 'ADMIN' | 'PRODUCTION' | 'AUDITOR' | 'OWNER';
+    allowedRoles: Array<'SALESMAN' | 'ADMIN' | 'PRODUCTION' | 'AUDITOR' | 'OWNER'>;
+    email: string;
+  }> = [
+    { label: 'Salesman (PWA)', path: '/sales', icon: ShoppingBag, role: 'SALESMAN', allowedRoles: ['SALESMAN', 'ADMIN', 'OWNER'], email: 'salesman@snackflow.local' },
+    { label: 'Admin Inbox', path: '/admin/orders', icon: Inbox, role: 'ADMIN', allowedRoles: ['ADMIN', 'OWNER'], email: 'admin@snackflow.local' },
+    { label: 'Production Wizard', path: '/production', icon: Factory, role: 'PRODUCTION', allowedRoles: ['PRODUCTION', 'ADMIN', 'OWNER'], email: 'production@snackflow.local' },
+    { label: 'Auditor Reports', path: '/audit', icon: FileCheck2, role: 'AUDITOR', allowedRoles: ['AUDITOR', 'ADMIN', 'OWNER'], email: 'auditor@snackflow.local' },
+    { label: 'Owner Insights', path: '/owner', icon: PieChart, role: 'OWNER', allowedRoles: ['OWNER', 'ADMIN'], email: 'owner@snackflow.local' },
   ];
 
   // If on login page, display clean minimal header
@@ -165,19 +173,26 @@ export function Header() {
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname.startsWith(item.path);
+              const isRestricted = session && !item.allowedRoles.includes(session.role);
               return (
-                <button
+                <Link
                   key={item.path}
-                  onClick={() => handleRoleChange(item.email, item.path)}
+                  href={item.path}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     isActive
                       ? 'bg-white text-amber-900 shadow-xs border border-stone-200/80'
+                      : isRestricted
+                      ? 'text-stone-400 hover:text-stone-700 hover:bg-stone-200/40'
                       : 'text-stone-600 hover:text-stone-900 hover:bg-white/50'
                   }`}
+                  title={isRestricted ? `Restricted: Requires ${item.allowedRoles.join(' or ')} role` : undefined}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-600' : 'text-stone-400'}`} />
-                  {item.label}
-                </button>
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-600' : isRestricted ? 'text-stone-300' : 'text-stone-400'}`} />
+                  <span>{item.label}</span>
+                  {isRestricted && (
+                    <Lock className="w-2.5 h-2.5 text-stone-400 shrink-0 ml-0.5 opacity-60" />
+                  )}
+                </Link>
               );
             })}
           </nav>
