@@ -1,13 +1,15 @@
-# Netlify Configuration for SnackFlow Monorepo (Next.js 15 + Turborepo + pnpm)
+# Netlify Configuration for SnackFlow Web (Static Export)
 
 [build]
   command = "pnpm --filter @snackflow/shared build && pnpm --filter @snackflow/web build"
-  publish = "apps/web/.next"
+  publish = "apps/web/out"
 
 [build.environment]
   NODE_VERSION = "20"
   PNPM_FLAGS = "--no-frozen-lockfile"
 
-# Next.js Runtime
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
+# SPA Fallback for client-side navigation
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

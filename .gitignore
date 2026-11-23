@@ -39,3 +39,6 @@ Thumbs.db
 
 # Temporary / ignored plans
 IMPLEMENTATION_PLAN_2.md
+
+# Local Netlify folder
+.netlify

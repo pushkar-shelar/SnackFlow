@@ -2,14 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@snackflow/shared'],
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: 'http://127.0.0.1:4000/api/:path*',
-      },
-    ];
-  },
+  output: 'export',
+  images: { unoptimized: true },
 };
 
 export default nextConfig;
