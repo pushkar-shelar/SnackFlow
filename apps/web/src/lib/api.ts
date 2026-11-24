@@ -159,11 +159,7 @@ const MOCK_PARTIES = [
 
 const MOCK_ITEMS = [
   { id: 'fg-mur-200g', sku: 'FG-MUR-200G', name: 'Murukku 200g (முறுக்கு)', kind: 'FINISHED', baseUom: 'PKT', hsn: '21069099', gstRate: 5.0, rate: 50.0, netWeightG: 200.0, shelfLifeDays: 90 },
-  { id: 'fg-mix-250g', sku: 'FG-MIX-250G', name: 'Special Mixture 250g (ஸ்பெஷல் மிக்ஸர்)', kind: 'FINISHED', baseUom: 'PKT', hsn: '21069099', gstRate: 12.0, rate: 65.0, netWeightG: 250.0, shelfLifeDays: 90 },
   { id: 'fg-rib-200g', sku: 'FG-RIB-200G', name: 'Ribbon Pakoda 200g (ரிப்பன் பக்கோடா)', kind: 'FINISHED', baseUom: 'PKT', hsn: '21069099', gstRate: 5.0, rate: 50.0, netWeightG: 200.0, shelfLifeDays: 75 },
-  { id: 'fg-kai-150g', sku: 'FG-KAI-150G', name: 'Kai Murukku 150g (கை முறுக்கு)', kind: 'FINISHED', baseUom: 'PKT', hsn: '21069099', gstRate: 5.0, rate: 60.0, netWeightG: 150.0, shelfLifeDays: 60 },
-  { id: 'fg-tha-200g', sku: 'FG-THA-200G', name: 'Thattai 200g (தட்டை)', kind: 'FINISHED', baseUom: 'PKT', hsn: '21069099', gstRate: 5.0, rate: 50.0, netWeightG: 200.0, shelfLifeDays: 75 },
-  { id: 'fg-boo-200g', sku: 'FG-BOO-200G', name: 'Kara Boondi 200g (கார பூந்தி)', kind: 'FINISHED', baseUom: 'PKT', hsn: '21069099', gstRate: 12.0, rate: 55.0, netWeightG: 200.0, shelfLifeDays: 90 },
   { id: 'raw-flour', sku: 'RAW-FLOUR', name: 'Rice Flour (அரிசி மாவு)', kind: 'RAW', baseUom: 'KG', hsn: '11029000', gstRate: 5.0, rate: 42.0 },
   { id: 'raw-oil', sku: 'RAW-OIL', name: 'Cooking Oil (எண்ணெய்)', kind: 'RAW', baseUom: 'L', hsn: '15121910', gstRate: 5.0, rate: 140.0 },
   { id: 'raw-spice', sku: 'RAW-SPICE', name: 'Spice Mix (மசாலா)', kind: 'RAW', baseUom: 'KG', hsn: '09109929', gstRate: 5.0, rate: 200.0 },
@@ -178,11 +174,7 @@ export const MOCK_STOCK_BALANCES = [
   { itemId: 'pkg-pouch', sku: 'PKG-POUCH-200G', name: 'Printed Pouches 200g', kind: 'PACKAGING', uom: 'PCS', qty: 306.0, wac: 2.5, value: 765.0 },
   { itemId: 'pkg-carton', sku: 'PKG-CARTON-20PKT', name: 'Corrugated Cartons (20 PKT)', kind: 'PACKAGING', uom: 'PCS', qty: 21.0, wac: 15.0, value: 315.0 },
   { itemId: 'fg-mur-200g', sku: 'FG-MUR-200G', name: 'Murukku 200g (முறுக்கு)', kind: 'FINISHED', uom: 'PKT', qty: 88.0, wac: 31.144, value: 2740.67 },
-  { itemId: 'fg-mix-250g', sku: 'FG-MIX-250G', name: 'Special Mixture 250g (ஸ்பெஷல் மிக்ஸர்)', kind: 'FINISHED', uom: 'PKT', qty: 200.0, wac: 45.0, value: 9000.0 },
   { itemId: 'fg-rib-200g', sku: 'FG-RIB-200G', name: 'Ribbon Pakoda 200g (ரிப்பன் பக்கோடா)', kind: 'FINISHED', uom: 'PKT', qty: 0.0, wac: 32.0, value: 0.0 },
-  { itemId: 'fg-kai-150g', sku: 'FG-KAI-150G', name: 'Kai Murukku 150g (கை முறுக்கு)', kind: 'FINISHED', uom: 'PKT', qty: 0.0, wac: 35.0, value: 0.0 },
-  { itemId: 'fg-tha-200g', sku: 'FG-THA-200G', name: 'Thattai 200g (தட்டை)', kind: 'FINISHED', uom: 'PKT', qty: 0.0, wac: 30.0, value: 0.0 },
-  { itemId: 'fg-boo-200g', sku: 'FG-BOO-200G', name: 'Kara Boondi 200g (கார பூந்தி)', kind: 'FINISHED', uom: 'PKT', qty: 0.0, wac: 32.0, value: 0.0 },
 ];
 
 export const MOCK_STOCK_LEDGER = [
@@ -255,13 +247,13 @@ const MOCK_ORDERS = [
     lines: [
       {
         id: 'line-02',
-        itemId: 'fg-mix-250g',
-        item: { name: 'Special Mixture 250g (ஸ்பெஷல் மிக்ஸர்)', sku: 'FG-MIX-250G', baseUom: 'PKT' },
+        itemId: 'fg-rib-200g',
+        item: { name: 'Ribbon Pakoda 200g (ரிப்பன் பக்கோடா)', sku: 'FG-RIB-200G', baseUom: 'PKT' },
         qty: 200,
         uom: 'PKT',
-        rate: 65.0,
-        taxable: 11607.14,
-        total: 13000.0,
+        rate: 50.0,
+        taxable: 9523.81,
+        total: 10000.0,
         stockCoverage: 'COVERED',
       },
     ],
@@ -269,7 +261,7 @@ const MOCK_ORDERS = [
       {
         id: 'inv-001',
         number: 'INV/2026-27/0001',
-        total: 13000.0,
+        total: 10000.0,
         status: 'POSTED',
       },
     ],
@@ -437,7 +429,14 @@ function getStoredStockBalances(): any[] {
   if (typeof window === 'undefined') return MOCK_STOCK_BALANCES;
   try {
     const raw = localStorage.getItem('snackflow_stock_balances');
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // Exclude removed products from old localStorage
+        const allowedItemIds = ['raw-flour', 'raw-oil', 'raw-spice', 'pkg-pouch', 'pkg-carton', 'fg-mur-200g', 'fg-rib-200g'];
+        return parsed.filter((b: any) => allowedItemIds.includes(b.itemId || b.id || b.sku?.toLowerCase()));
+      }
+    }
   } catch {}
   return MOCK_STOCK_BALANCES;
 }
@@ -1244,7 +1243,7 @@ export async function downloadReport(reportType: string, format: 'excel' | 'csv'
   }
 
   // Instant client-side statutory export fallback
-  const csvContent = `Report,${reportType.toUpperCase()}\nCompany,Murukku Delights Private Limited (Sri Murugan Snacks)\nGSTIN,33AABCM1234F1Z0\nGeneratedAt,${new Date().toISOString()}\nItem,SKU,UOM,Quantity,Rate,Amount\nMurukku 200g,FG-MUR-200G,PKT,150,50.00,7500.00\nSpecial Mixture 250g,FG-MIX-250G,PKT,200,65.00,13000.00\nRibbon Pakoda 200g,FG-RIB-200G,PKT,100,50.00,5000.00\n`;
+  const csvContent = `Report,${reportType.toUpperCase()}\nCompany,Murukku Delights Private Limited (Sri Murugan Snacks)\nGSTIN,33AABCM1234F1Z0\nGeneratedAt,${new Date().toISOString()}\nItem,SKU,UOM,Quantity,Rate,Amount\nMurukku 200g,FG-MUR-200G,PKT,150,50.00,7500.00\nRibbon Pakoda 200g,FG-RIB-200G,PKT,100,50.00,5000.00\n`;
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const downloadUrl = window.URL.createObjectURL(blob);
   const a = document.createElement('a');

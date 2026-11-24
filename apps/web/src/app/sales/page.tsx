@@ -82,13 +82,20 @@ export default function SalesmanPage() {
         apiFetch<Item[]>('/catalog/items?kind=FINISHED'),
       ]);
       setParties(partiesRes);
-      setItems(itemsRes);
+      // Strictly restrict sales products to Murukku and Ribbon Pakoda only
+      const allowedSkus = ['FG-MUR-200G', 'FG-RIB-200G'];
+      const salesItems = itemsRes.filter((item) =>
+        allowedSkus.includes(item.sku) ||
+        (item.name.toLowerCase().includes('murukku') && !item.name.toLowerCase().includes('kai')) ||
+        item.name.toLowerCase().includes('ribbon')
+      );
+      setItems(salesItems);
       if (partiesRes.length > 0) {
         setSelectedParty(partiesRes[0]!);
       }
       // Initialize items with 0 qty and standard rate 50
       const initial: Record<string, { qty: number; isCarton: boolean; rate: number }> = {};
-      for (const item of itemsRes) {
+      for (const item of salesItems) {
         initial[item.id] = { qty: 0, isCarton: false, rate: 50.0 };
       }
       setOrderLines(initial);
