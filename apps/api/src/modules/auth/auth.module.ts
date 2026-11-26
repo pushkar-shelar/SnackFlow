@@ -8,10 +8,17 @@ import { AuthController } from './auth.controller.js';
   imports: [
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_ACCESS_SECRET') || 'snackflow-default-secret',
-        signOptions: { expiresIn: '15m' },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_ACCESS_SECRET') || process.env.JWT_ACCESS_SECRET;
+        if (!secret || secret.length < 16) {
+          throw new Error('JWT_ACCESS_SECRET must be configured and at least 16 characters');
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: '15m', algorithm: 'HS256' },
+          verifyOptions: { algorithms: ['HS256'] },
+        };
+      },
       inject: [ConfigService],
     }),
   ],

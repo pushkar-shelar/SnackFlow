@@ -29,11 +29,13 @@ async function main() {
 
   const users = [
     { email: 'salesman@snackflow.local', name: 'Karthik (Salesman)', role: Role.SALESMAN },
+    { email: 'salesmanb@snackflow.local', name: 'Salesman B', role: Role.SALESMAN },
     { email: 'admin@snackflow.local', name: 'Meenakshi (Admin)', role: Role.ADMIN },
     { email: 'production@snackflow.local', name: 'Raman (Production Supervisor)', role: Role.PRODUCTION },
     { email: 'auditor@snackflow.local', name: 'Sundaram & Co (Auditor)', role: Role.AUDITOR },
     { email: 'owner@snackflow.local', name: 'Annamalai (Owner)', role: Role.OWNER },
     { email: 'salesman@snackflow.com', name: 'Karthik (Salesman)', role: Role.SALESMAN },
+    { email: 'salesmanb@snackflow.com', name: 'Salesman B', role: Role.SALESMAN },
     { email: 'admin@snackflow.com', name: 'Meenakshi (Admin)', role: Role.ADMIN },
     { email: 'production@snackflow.com', name: 'Raman (Production Supervisor)', role: Role.PRODUCTION },
     { email: 'auditor@snackflow.com', name: 'Sundaram & Co (Auditor)', role: Role.AUDITOR },
@@ -41,10 +43,11 @@ async function main() {
   ];
 
   const createdUsers: Record<string, any> = {};
+  const createdUsersByEmail: Record<string, any> = {};
   for (const u of users) {
-    createdUsers[u.role] = await prisma.user.upsert({
+    const upserted = await prisma.user.upsert({
       where: { email: u.email },
-      update: { role: u.role, passwordHash: defaultPasswordHash },
+      update: { role: u.role, name: u.name, passwordHash: defaultPasswordHash },
       create: {
         companyId: company.id,
         email: u.email,
@@ -53,6 +56,10 @@ async function main() {
         passwordHash: defaultPasswordHash,
       },
     });
+    createdUsersByEmail[u.email] = upserted;
+    if (!createdUsers[u.role]) {
+      createdUsers[u.role] = upserted;
+    }
   }
 
   // 3. Price List
@@ -166,7 +173,24 @@ async function main() {
     },
   });
 
-  // 5. Item UoM: 1 CTN = 20 PKT for Murukku 200g
+  const fgRibbon = await prisma.item.upsert({
+    where: { companyId_sku: { companyId: company.id, sku: 'FG-RIB-200G' } },
+    update: {},
+    create: {
+      companyId: company.id,
+      sku: 'FG-RIB-200G',
+      name: 'Ribbon Pakoda 200g',
+      kind: ItemKind.FINISHED,
+      baseUom: 'PKT',
+      hsn: '21069099',
+      gstRate: 5.0,
+      netWeightG: 200.0,
+      shelfLifeDays: 75,
+      costMethod: CostMethod.BATCH_ACTUAL,
+    },
+  });
+
+  // 5. Item UoM: 1 CTN = 20 PKT for Murukku 200g and Ribbon Pakoda 200g
   await prisma.itemUom.upsert({
     where: { itemId_uom: { itemId: fgMurukku.id, uom: 'CTN' } },
     update: {},
@@ -178,13 +202,34 @@ async function main() {
     },
   });
 
-  // Price List Item: Murukku 200g = ₹50.00
+  await prisma.itemUom.upsert({
+    where: { itemId_uom: { itemId: fgRibbon.id, uom: 'CTN' } },
+    update: {},
+    create: {
+      companyId: company.id,
+      itemId: fgRibbon.id,
+      uom: 'CTN',
+      factorToBase: 20.0,
+    },
+  });
+
+  // Price List Items: Murukku 200g = ₹50.00, Ribbon Pakoda 200g = ₹50.00
   await prisma.priceListItem.upsert({
     where: { priceListId_itemId: { priceListId: priceList.id, itemId: fgMurukku.id } },
     update: { rate: 50.0 },
     create: {
       priceListId: priceList.id,
       itemId: fgMurukku.id,
+      rate: 50.0,
+    },
+  });
+
+  await prisma.priceListItem.upsert({
+    where: { priceListId_itemId: { priceListId: priceList.id, itemId: fgRibbon.id } },
+    update: { rate: 50.0 },
+    create: {
+      priceListId: priceList.id,
+      itemId: fgRibbon.id,
       rate: 50.0,
     },
   });
@@ -232,6 +277,47 @@ async function main() {
     ],
   });
 
+  // 6b. Recipe & Pack Spec: Ribbon Pakoda 20 kg batch (100 PKT)
+  const ribbonRecipe = await prisma.recipe.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000021' },
+    update: {},
+    create: {
+      id: '00000000-0000-0000-0000-000000000021',
+      companyId: company.id,
+      productFamily: 'Ribbon Pakoda',
+      batchOutputKg: 20.0,
+      tolerancePct: 3.0,
+      description: 'Standard 20 kg kettle batch Ribbon Pakoda',
+    },
+  });
+
+  await prisma.recipeLine.deleteMany({ where: { recipeId: ribbonRecipe.id } });
+  await prisma.recipeLine.createMany({
+    data: [
+      { recipeId: ribbonRecipe.id, itemId: rawFlour.id, qtyPerBatch: 20.0, uom: 'KG' },
+      { recipeId: ribbonRecipe.id, itemId: rawOil.id, qtyPerBatch: 5.0, uom: 'L' },
+      { recipeId: ribbonRecipe.id, itemId: rawSpice.id, qtyPerBatch: 0.8, uom: 'KG' },
+    ],
+  });
+
+  const ribbonPackSpec = await prisma.packSpec.upsert({
+    where: { companyId_fgItemId: { companyId: company.id, fgItemId: fgRibbon.id } },
+    update: {},
+    create: {
+      companyId: company.id,
+      fgItemId: fgRibbon.id,
+      description: 'Ribbon Pakoda 200g packet packaging spec',
+    },
+  });
+
+  await prisma.packSpecLine.deleteMany({ where: { packSpecId: ribbonPackSpec.id } });
+  await prisma.packSpecLine.createMany({
+    data: [
+      { packSpecId: ribbonPackSpec.id, packagingItemId: pkgPouch.id, qtyPerPacket: 1.0 },
+      { packSpecId: ribbonPackSpec.id, packagingItemId: pkgCarton.id, qtyPerPacket: 0.05 },
+    ],
+  });
+
   // 8. Parties
   const gstinTN = generateValidGstin('33', 'AABCS1234A', '1');
   const gstinKA = generateValidGstin('29', 'AABCB5678B', '1');
@@ -269,6 +355,38 @@ async function main() {
     },
   });
 
+  await prisma.party.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000035' },
+    update: { assignedSalesmanId: createdUsersByEmail['salesmanb@snackflow.local']?.id ?? null },
+    create: {
+      id: '00000000-0000-0000-0000-000000000035',
+      companyId: company.id,
+      name: 'Kaveri Mart (Retailer B)',
+      kind: PartyKind.CUSTOMER_RETAILER,
+      gstin: generateValidGstin('33', 'AABCK2345C', '1'),
+      stateCode: '33',
+      address: '28 Anna Salai, Thanjavur, Tamil Nadu 613001',
+      priceListId: priceList.id,
+      assignedSalesmanId: createdUsersByEmail['salesmanb@snackflow.local']?.id ?? null,
+      creditDays: 30,
+    },
+  });
+
+  await prisma.party.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000034' },
+    update: {},
+    create: {
+      id: '00000000-0000-0000-0000-000000000034',
+      companyId: company.id,
+      name: 'Thanjavur Agro Mills (Raw Material Supplier)',
+      kind: PartyKind.SUPPLIER,
+      gstin: generateValidGstin('33', 'AAACT5678M', '1'),
+      stateCode: '33',
+      address: 'Trichy-Thanjavur Highway, Tamil Nadu 613001',
+      creditDays: 30,
+    },
+  });
+
   // 9. Document Sequences for FY
   const currentFy = getFinancialYear(new Date());
   const docTypes = ['INV', 'ORD', 'RUN', 'DISP', 'CRN', 'PAY', 'PUR'];
@@ -285,20 +403,43 @@ async function main() {
     });
   }
 
-  // Helper to upsert stock balance cleanly
+  // Helper to upsert stock balance AND insert balanced OPENING ledger row if absent
   async function upsertStockBalance(companyId: string, itemId: string, batchId: string | null, qty: number, value: number, wac: number) {
     const existing = await prisma.stockBalance.findFirst({
       where: { companyId, itemId, batchId },
     });
-    if (existing) {
-      return prisma.stockBalance.update({
+    if (!existing) {
+      await prisma.stockBalance.create({
+        data: { companyId, itemId, batchId, qty, value, wac },
+      });
+    } else {
+      await prisma.stockBalance.update({
         where: { id: existing.id },
         data: { qty, value, wac },
       });
     }
-    return prisma.stockBalance.create({
-      data: { companyId, itemId, batchId, qty, value, wac },
+
+    const existingLedgerCount = await prisma.stockLedger.count({
+      where: { companyId, itemId, batchId },
     });
+    if (existingLedgerCount === 0 && qty > 0) {
+      await prisma.stockLedger.create({
+        data: {
+          companyId,
+          itemId,
+          batchId,
+          qtyIn: qty,
+          qtyOut: 0,
+          unitCost: wac,
+          value,
+          balanceQtyAfter: qty,
+          balanceValueAfter: value,
+          movementType: MovementType.OPENING,
+          sourceType: 'OPENING_SEED',
+          sourceId: companyId,
+        },
+      });
+    }
   }
 
   // 10. Opening Stock Batches & Balances per §14 Benchmark

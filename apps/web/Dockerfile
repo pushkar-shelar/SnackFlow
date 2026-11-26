@@ -9,6 +9,8 @@ COPY apps/web/package.json ./apps/web/
 RUN pnpm install --frozen-lockfile
 
 FROM dependencies AS builder
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY packages/shared/ ./packages/shared/
 COPY apps/web/ ./apps/web/
 RUN pnpm --filter @snackflow/shared build
@@ -17,11 +19,11 @@ RUN pnpm --filter @snackflow/web build
 FROM base AS runner
 ENV NODE_ENV=production
 WORKDIR /app/apps/web
-COPY --from=builder /app/node_modules /app/node_modules
-COPY --from=builder /app/packages/shared /app/packages/shared
-COPY --from=builder /app/apps/web/.next ./.next
-COPY --from=builder /app/apps/web/public ./public
-COPY --from=builder /app/apps/web/package.json ./package.json
+COPY --chown=node:node --from=builder /app/apps/web/out ./out
+COPY --chown=node:node --from=builder /app/apps/web/serve-export.mjs ./serve-export.mjs
+COPY --chown=node:node --from=builder /app/apps/web/package.json ./package.json
 
+USER node
 EXPOSE 3000
-CMD ["pnpm", "start"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "serve-export.mjs"]

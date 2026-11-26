@@ -1,5 +1,6 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import { AlertsService } from './alerts.service.js';
+import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
 import { Permission } from '@snackflow/shared';
 
@@ -9,7 +10,7 @@ export class AlertsController {
 
   @Get()
   @RequirePermission(Permission.REPORT_READ)
-  async getActiveAlerts() {
-    return this.alertsService.getActiveAlerts();
+  async getActiveAlerts(@CurrentUser() user: AuthenticatedUser) {
+    return this.alertsService.getActiveAlerts(user.companyId);
   }
 }

@@ -11,6 +11,7 @@ export interface UserSession {
 
 export const SEEDED_ACCOUNTS = [
   { role: 'SALESMAN', name: 'Karthik (Salesman)', email: 'salesman@snackflow.local', path: '/sales', description: 'Field sales orders, offline mobile PWA' },
+  { role: 'SALESMAN', name: 'Salesman B', email: 'salesmanb@snackflow.local', path: '/sales', description: 'Territory B field sales orders, offline mobile PWA' },
   { role: 'ADMIN', name: 'Meenakshi (Admin)', email: 'admin@snackflow.local', path: '/admin/orders', description: 'Order approval, invoicing & dispatch' },
   { role: 'PRODUCTION', name: 'Raman (Supervisor)', email: 'production@snackflow.local', path: '/production', description: 'Batch execution, yield & variance wizard' },
   { role: 'AUDITOR', name: 'Sundaram & Co (Auditor)', email: 'auditor@snackflow.local', path: '/audit', description: 'Statutory compliance & stock ledger drill-down' },
@@ -35,6 +36,7 @@ export function setStoredSession(session: UserSession | null): void {
   } else {
     localStorage.removeItem('snackflow_session');
   }
+  window.dispatchEvent(new Event('snackflow-session-change'));
 }
 
 /**
@@ -52,15 +54,17 @@ function shouldBypassLocalhost(): boolean {
 export async function login(email: string, password: string = 'Password123!'): Promise<UserSession> {
   const cleanEmail = email.trim().toLowerCase();
 
-  // 1. Attempt live API login if available and safe to call
+  // 1. Attempt live API login when live backend URL is reachable
   if (!shouldBypassLocalhost()) {
+    let networkUnreachable = false;
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
+      const timer = setTimeout(() => controller.abort(), 3000);
       const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail, password }),
+        credentials: 'include',
         signal: controller.signal,
       }).finally(() => clearTimeout(timer));
 
@@ -77,30 +81,48 @@ export async function login(email: string, password: string = 'Password123!'): P
         setStoredSession(session);
         return session;
       }
-    } catch {
-      // Live API unreachable
+
+      // Server responded (e.g. 401/400/403): NEVER bypass authentication via mock fallback
+      setStoredSession(null);
+      const errBody = await res.json().catch(() => ({}));
+      const fieldErrors = Array.isArray(errBody.errors) && errBody.errors.length > 0
+        ? `: ${errBody.errors.map((e: any) => `${e.field}: ${e.message}`).join('; ')}`
+        : '';
+      throw new Error((errBody.detail || errBody.message || 'Invalid email or password') + fieldErrors);
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || err instanceof TypeError) {
+        networkUnreachable = true;
+      } else {
+        throw err;
+      }
+    }
+
+    if (!networkUnreachable) {
+      throw new Error('Authentication failed');
     }
   }
 
-  // 2. Seamless instant role login for benchmark demo accounts
-  const seeded = SEEDED_ACCOUNTS.find(
-    (a) => a.email.toLowerCase() === cleanEmail || cleanEmail.startsWith(a.role.toLowerCase()),
-  );
+  // 2. Demo offline fallback strictly for unreachable offline demo environments with demo password
+  if (password === 'Password123!' && (shouldBypassLocalhost() || process.env.NEXT_PUBLIC_ALLOW_OFFLINE_DEMO === 'true')) {
+    const seeded = SEEDED_ACCOUNTS.find(
+      (a) => a.email.toLowerCase() === cleanEmail,
+    );
 
-  if (seeded) {
-    const session: UserSession = {
-      userId: `user-${seeded.role.toLowerCase()}`,
-      name: seeded.name,
-      email: seeded.email,
-      role: seeded.role,
-      companyId: '00000000-0000-0000-0000-000000000001',
-      token: `demo-jwt-token-${seeded.role.toLowerCase()}`,
-    };
-    setStoredSession(session);
-    return session;
+    if (seeded) {
+      const session: UserSession = {
+        userId: `user-${seeded.role.toLowerCase()}`,
+        name: seeded.name,
+        email: seeded.email,
+        role: seeded.role,
+        companyId: '00000000-0000-0000-0000-000000000001',
+        token: `demo-jwt-token-${seeded.role.toLowerCase()}`,
+      };
+      setStoredSession(session);
+      return session;
+    }
   }
 
-  throw new Error('Invalid email or password. Please select one of the 1-click role accounts below.');
+  throw new Error('Invalid email or password. Please verify your credentials.');
 }
 
 export const loginAs = (email: string) => login(email, 'Password123!');
@@ -996,14 +1018,22 @@ function getMockFallback(endpoint: string, options: RequestInit = {}): any {
   }
 
   if (path === '/production/runs/draft') {
+    let body: any = {};
+    try {
+      if (typeof options.body === 'string') body = JSON.parse(options.body);
+    } catch {}
+    const isRibbon = body.fgItemId === 'fg-rib-200g' || body.recipeId?.includes('ribbon') || body.recipeId === '00000000-0000-0000-0000-000000000021';
+    const fgSku = isRibbon ? 'FG-RIB-200G' : 'FG-MUR-200G';
+    const fgName = isRibbon ? 'Ribbon Pakoda 200g (ரிப்பன் பக்கோடா)' : 'Murukku 200g (முறுக்கு)';
+    const batchPrefix = isRibbon ? 'RIB200' : 'MUR200';
     return {
-      id: 'run-draft-001',
-      batchNo: 'BATCH-2026-11-24-01',
-      recipeId: '00000000-0000-0000-0000-000000000020',
-      fgItemId: 'fg-mur-200g',
-      fgItem: { name: 'Murukku 200g (முறுக்கு)', sku: 'FG-MUR-200G' },
-      batchFactor: 1.0,
-      stdOutputKg: 40.0,
+      id: `run-draft-${Date.now()}`,
+      batchNo: `${batchPrefix}-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-01`,
+      recipeId: body.recipeId || (isRibbon ? '00000000-0000-0000-0000-000000000021' : '00000000-0000-0000-0000-000000000020'),
+      fgItemId: isRibbon ? 'fg-rib-200g' : 'fg-mur-200g',
+      fgItem: { name: fgName, sku: fgSku },
+      batchFactor: body.batchFactor || 1.0,
+      stdOutputKg: isRibbon ? 20.0 : 40.0,
       status: 'DRAFT',
       qcStatus: 'PENDING',
     };
@@ -1030,7 +1060,10 @@ function getMockFallback(endpoint: string, options: RequestInit = {}): any {
 
     const balances = getStoredStockBalances();
     const ledger = getStoredStockLedger();
-    const batchNo = `MUR200-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-01`;
+    const targetFgItemId = body.fgItemId || (body.recipeId?.includes('rib') ? 'fg-rib-200g' : 'fg-mur-200g');
+    const isRibbon = targetFgItemId.includes('rib') || body.fgSku === 'FG-RIB-200G' || body.recipeName?.includes('Ribbon');
+    const batchPrefix = isRibbon ? 'RIB200' : 'MUR200';
+    const batchNo = `${batchPrefix}-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-01`;
     const nowIso = new Date().toISOString();
 
     const actualInputs = body.actualInputs || [
@@ -1114,7 +1147,12 @@ function getMockFallback(endpoint: string, options: RequestInit = {}): any {
     }
 
     // 3. Credit Finished Goods produced
-    const fgBal = balances.find((b: any) => b.sku === 'FG-MUR-200G' || b.itemId === 'fg-mur-200g');
+    const fgBal = balances.find(
+      (b: any) =>
+        b.itemId === targetFgItemId ||
+        b.sku === (isRibbon ? 'FG-RIB-200G' : 'FG-MUR-200G') ||
+        (isRibbon ? b.name?.includes('Ribbon') : b.name?.includes('Murukku'))
+    );
     if (fgBal) {
       fgBal.qty = Number((fgBal.qty + goodOutputQty).toFixed(4));
       fgBal.value = Number((fgBal.qty * fgBal.wac).toFixed(2));
@@ -1126,8 +1164,8 @@ function getMockFallback(endpoint: string, options: RequestInit = {}): any {
         itemName: `${fgBal.name} (Batch ${batchNo})`,
         movementType: 'PROD_IN',
         qty: goodOutputQty,
-        rate: 24.15,
-        totalValue: Number((goodOutputQty * 24.15).toFixed(2)),
+        rate: isRibbon ? 32.0 : 24.15,
+        totalValue: Number((goodOutputQty * (isRibbon ? 32.0 : 24.15)).toFixed(2)),
         batchNo,
         txnAt: nowIso,
         auditHash: `#sha256-${Math.random().toString(36).substring(2, 7)}`,
@@ -1143,10 +1181,10 @@ function getMockFallback(endpoint: string, options: RequestInit = {}): any {
       batchNo,
       status: 'POSTED',
       yieldKg: Number((goodOutputQty * 0.2).toFixed(2)),
-      variancePct: -6.0,
-      onHandShare: 800.0,
-      cogsShare: 400.0,
-      finalUnitCost: 24.15,
+      variancePct: isRibbon ? Number((((goodOutputQty - 100) / 100) * 100).toFixed(1)) : -6.0,
+      onHandShare: isRibbon ? 400.0 : 800.0,
+      cogsShare: isRibbon ? 200.0 : 400.0,
+      finalUnitCost: isRibbon ? 32.0 : 24.15,
       success: true,
       message: 'Batch posted successfully! Raw materials deducted, Finished Goods credited to inventory.',
     };
@@ -1174,7 +1212,7 @@ export async function apiFetch<T = any>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  let session = getStoredSession();
+  const session = getStoredSession();
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
@@ -1187,62 +1225,94 @@ export async function apiFetch<T = any>(
 
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
 
-  // 1. If safe to call live backend API, try it with short timeout
+  // 1. If safe to call live backend API, call it and never mask HTTP error status codes
   if (!shouldBypassLocalhost()) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(url, { ...options, headers, signal: controller.signal }).finally(() =>
-        clearTimeout(timer),
-      );
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(url, {
+        ...options,
+        headers,
+        credentials: 'include',
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
 
       if (res.ok) {
+        if (res.status === 204) return {} as T;
         return await res.json();
       }
-    } catch {
-      // Network failed or offline, fall through to high-fidelity benchmark mock
+
+      if (res.status === 401) {
+        setStoredSession(null);
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+          window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+        }
+        throw new Error('Session expired or unauthorized. Please sign in again.');
+      }
+
+      const errData = await res.json().catch(() => ({}));
+      const fieldErrors = Array.isArray(errData.errors) && errData.errors.length > 0
+        ? `: ${errData.errors.map((e: any) => `${e.field}: ${e.message}`).join('; ')}`
+        : '';
+      throw new Error(
+        (errData.detail || errData.message || errData.error || `Request failed with status ${res.status}`) +
+          fieldErrors,
+      );
+    } catch (err: any) {
+      const isNetworkFailure = err?.name === 'AbortError' || err instanceof TypeError;
+      if (!isNetworkFailure) {
+        throw err;
+      }
+      // Genuine network unavailability -> fall through only for offline PWA resilience
     }
   }
 
-  // 2. Return benchmark dataset
+  // 2. Return benchmark dataset when genuinely offline or static HTTPS demo mode
   const fallback = getMockFallback(endpoint, options);
   if (fallback !== undefined) {
     return fallback as T;
   }
 
-  return { success: true } as unknown as T;
+  throw new Error(`Network unavailable and no offline handler for ${endpoint}`);
 }
 
-export async function downloadReport(reportType: string, format: 'excel' | 'csv'): Promise<void> {
+export async function downloadReport(
+  reportType: string,
+  format: 'excel' | 'csv' | 'pdf',
+  query?: { startDate?: string; endDate?: string },
+): Promise<void> {
   const session = getStoredSession();
-  const url = `${API_BASE_URL}/reports/export/${reportType}?format=${format}`;
+  const params = new URLSearchParams({ format });
+  if (query?.startDate) params.set('startDate', query.startDate);
+  if (query?.endDate) params.set('endDate', query.endDate);
+  const url = `${API_BASE_URL}/reports/export/${reportType}?${params.toString()}`;
 
   if (!shouldBypassLocalhost()) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
-        },
-      });
+    const res = await fetch(url, {
+      headers: {
+        ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
+      },
+      credentials: 'include',
+    });
 
-      if (res.ok) {
-        const blob = await res.blob();
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `${reportType}.${format === 'excel' ? 'xlsx' : 'csv'}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(downloadUrl);
-        return;
-      }
-    } catch {
-      // Live export failed, trigger client-side CSV download
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || errData.detail || `Export failed with status ${res.status}`);
     }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `${reportType}.${format === 'excel' ? 'xlsx' : format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+    return;
   }
 
-  // Instant client-side statutory export fallback
+  // Instant client-side statutory export fallback strictly for offline demo mode
   const csvContent = `Report,${reportType.toUpperCase()}\nCompany,Murukku Delights Private Limited (Sri Murugan Snacks)\nGSTIN,33AABCM1234F1Z0\nGeneratedAt,${new Date().toISOString()}\nItem,SKU,UOM,Quantity,Rate,Amount\nMurukku 200g,FG-MUR-200G,PKT,150,50.00,7500.00\nRibbon Pakoda 200g,FG-RIB-200G,PKT,100,50.00,5000.00\n`;
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const downloadUrl = window.URL.createObjectURL(blob);

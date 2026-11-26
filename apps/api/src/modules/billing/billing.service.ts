@@ -1,10 +1,14 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
+  InternalServerErrorException,
   Inject,
+  Optional,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
@@ -21,76 +25,97 @@ import {
 
 @Injectable()
 export class BillingService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(ConfigService) private readonly configService?: ConfigService,
+  ) {}
+
+  private getShareSecret(): string {
+    const secret =
+      this.configService?.get<string>('HMAC_SHARE_SECRET') || process.env.HMAC_SHARE_SECRET;
+    if (!secret) {
+      throw new InternalServerErrorException('HMAC_SHARE_SECRET is not configured');
+    }
+    return secret;
+  }
 
   async postInvoice(companyId: string, dto: PostInvoiceDto, _createdBy?: string) {
-    const order = await this.prisma.salesOrder.findFirst({
-      where: { id: dto.orderId, companyId },
-      include: {
-        lines: { include: { item: true } },
-        party: true,
-        company: true,
-        invoices: true,
-      },
-    });
-
-    if (!order) {
-      throw new NotFoundException(`Sales order '${dto.orderId}' not found`);
-    }
-
-    if (order.status !== OrderStatus.APPROVED && order.status !== OrderStatus.PARTIALLY_APPROVED) {
-      throw new BadRequestException(
-        `Cannot invoice order in status '${order.status}'. Order must be APPROVED before invoicing.`,
-      );
-    }
-
-    if (order.invoices.some((inv) => inv.status === InvoiceStatus.POSTED)) {
-      throw new BadRequestException(`Order '${order.number}' has already been invoiced.`);
-    }
-
-    const isInterState = order.party.stateCode !== order.company.stateCode;
-    const supplyType = isInterState ? SupplyType.INTER : SupplyType.INTRA;
     const fy = getFinancialYear();
 
-    let taxableTotal = toDecimal(0);
-    let cgstTotal = toDecimal(0);
-    let sgstTotal = toDecimal(0);
-    let igstTotal = toDecimal(0);
-    let grandTotal = toDecimal(0);
+    return this.prisma.$transaction(async (tx) => {
+      // Lock sales order row inside transaction to prevent duplicate concurrent invoices for the same order
+      const lockedOrder = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM sales_order WHERE id = ${dto.orderId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedOrder.length === 0) {
+        throw new NotFoundException(`Sales order '${dto.orderId}' not found`);
+      }
 
-    const invoiceLinesData = order.lines.map((line) => {
-      const gst = computeLineGst({
-        qty: line.qty,
-        rate: line.rate,
-        gstRate: line.gstRate,
-        isInterState,
+      const order = await tx.salesOrder.findFirst({
+        where: { id: dto.orderId, companyId },
+        include: {
+          lines: { include: { item: true } },
+          party: true,
+          company: true,
+          invoices: true,
+        },
       });
 
-      taxableTotal = taxableTotal.plus(gst.taxable);
-      cgstTotal = cgstTotal.plus(gst.cgst);
-      sgstTotal = sgstTotal.plus(gst.sgst);
-      igstTotal = igstTotal.plus(gst.igst);
-      grandTotal = grandTotal.plus(gst.total);
+      if (!order) {
+        throw new NotFoundException(`Sales order '${dto.orderId}' not found`);
+      }
 
-      return {
-        itemId: line.itemId,
-        hsn: line.item.hsn,
-        qty: line.qty,
-        uom: line.uom,
-        rate: line.rate,
-        taxable: gst.taxable,
-        gstRate: line.gstRate,
-        cgst: gst.cgst,
-        sgst: gst.sgst,
-        igst: gst.igst,
-        total: gst.total,
-      };
-    });
+      if (order.status !== OrderStatus.APPROVED && order.status !== OrderStatus.PARTIALLY_APPROVED) {
+        throw new BadRequestException(
+          `Cannot invoice order in status '${order.status}'. Order must be APPROVED before invoicing.`,
+        );
+      }
 
-    const roundedGrandTotal = roundMoney(grandTotal);
-    const roundOff = roundedGrandTotal.minus(grandTotal);
+      if (order.invoices.some((inv) => inv.status === InvoiceStatus.POSTED)) {
+        throw new BadRequestException(`Order '${order.number}' has already been invoiced.`);
+      }
 
-    return this.prisma.$transaction(async (tx) => {
+      const isInterState = order.party.stateCode !== order.company.stateCode;
+      const supplyType = isInterState ? SupplyType.INTER : SupplyType.INTRA;
+
+      let taxableTotal = toDecimal(0);
+      let cgstTotal = toDecimal(0);
+      let sgstTotal = toDecimal(0);
+      let igstTotal = toDecimal(0);
+      let grandTotal = toDecimal(0);
+
+      const invoiceLinesData = order.lines.map((line) => {
+        const gst = computeLineGst({
+          qty: line.qty,
+          rate: line.rate,
+          gstRate: line.gstRate,
+          isInterState,
+        });
+
+        taxableTotal = taxableTotal.plus(gst.taxable);
+        cgstTotal = cgstTotal.plus(gst.cgst);
+        sgstTotal = sgstTotal.plus(gst.sgst);
+        igstTotal = igstTotal.plus(gst.igst);
+        grandTotal = grandTotal.plus(gst.total);
+
+        return {
+          itemId: line.itemId,
+          hsn: line.item.hsn,
+          qty: line.qty,
+          uom: line.uom,
+          rate: line.rate,
+          taxable: gst.taxable,
+          gstRate: line.gstRate,
+          cgst: gst.cgst,
+          sgst: gst.sgst,
+          igst: gst.igst,
+          total: gst.total,
+        };
+      });
+
+      const roundedGrandTotal = roundMoney(grandTotal);
+      const roundOff = roundedGrandTotal.minus(grandTotal);
+
       // 1. Allocate sequence under row lock
       const seq = await tx.$queryRaw<Array<{ next_no: number }>>`
         INSERT INTO document_sequence (id, company_id, doc_type, fy, next_no, updated_at)
@@ -138,7 +163,7 @@ export class BillingService {
     });
   }
 
-  async getInvoice(companyId: string, id: string) {
+  async getInvoice(companyId: string, id: string, salesmanId?: string) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { id, companyId },
       include: {
@@ -177,13 +202,23 @@ export class BillingService {
       throw new NotFoundException(`Invoice '${id}' not found`);
     }
 
+    if (
+      salesmanId &&
+      invoice.order?.salesmanId !== salesmanId &&
+      invoice.order?.party?.assignedSalesmanId !== salesmanId
+    ) {
+      throw new ForbiddenException('Access denied: invoice does not belong to you');
+    }
+
     return invoice;
   }
 
   async listInvoices(
     companyId: string,
-    filters?: { partyId?: string; status?: InvoiceStatus },
+    filters?: { partyId?: string; status?: InvoiceStatus; limit?: number; offset?: number },
   ) {
+    const take = Math.min(Math.max(1, Number(filters?.limit) || 200), 500);
+    const skip = Math.max(0, Number(filters?.offset) || 0);
     return this.prisma.invoice.findMany({
       where: {
         companyId,
@@ -204,15 +239,15 @@ export class BillingService {
         paymentAllocations: true,
       },
       orderBy: { createdAt: 'desc' },
+      take,
+      skip,
     });
   }
 
   // T4.1 & T4.2: HMAC-signed share link and UPI deep link
-  async generateShareLink(companyId: string, invoiceId: string) {
-    const invoice = await this.getInvoice(companyId, invoiceId);
-    const secret =
-      process.env.HMAC_SHARE_SECRET ||
-      'snackflow-development-hmac-share-invoice-key-2026-secure';
+  async generateShareLink(companyId: string, invoiceId: string, salesmanId?: string) {
+    const invoice = await this.getInvoice(companyId, invoiceId, salesmanId);
+    const secret = this.getShareSecret();
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
     const hmac = crypto.createHmac('sha256', secret);
     hmac.update(`${invoice.id}:${expiresAt}`);
@@ -247,14 +282,15 @@ export class BillingService {
     };
   }
 
-  async verifyAndGetPublicInvoice(invoiceId: string, expires: number, signature: string) {
+  async verifyAndGetPublicInvoice(invoiceId: string, expires: number, signature?: string) {
+    if (!signature || typeof signature !== 'string') {
+      throw new BadRequestException('Missing invoice share link signature');
+    }
     if (Date.now() > expires) {
       throw new UnauthorizedException('Invoice share link has expired');
     }
 
-    const secret =
-      process.env.HMAC_SHARE_SECRET ||
-      'snackflow-development-hmac-share-invoice-key-2026-secure';
+    const secret = this.getShareSecret();
     const hmac = crypto.createHmac('sha256', secret);
     hmac.update(`${invoiceId}:${expires}`);
     const expectedSig = hmac.digest('hex');
@@ -268,9 +304,49 @@ export class BillingService {
 
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
-      include: {
-        lines: { include: { item: true, batch: true } },
-        order: { include: { party: true } },
+      select: {
+        id: true,
+        number: true,
+        createdAt: true,
+        status: true,
+        supplyType: true,
+        placeOfSupply: true,
+        irn: true,
+        taxable: true,
+        cgst: true,
+        sgst: true,
+        igst: true,
+        roundOff: true,
+        total: true,
+        lines: {
+          select: {
+            id: true,
+            itemId: true,
+            hsn: true,
+            qty: true,
+            uom: true,
+            rate: true,
+            taxable: true,
+            gstRate: true,
+            cgst: true,
+            sgst: true,
+            igst: true,
+            total: true,
+            item: { select: { name: true, sku: true } },
+          },
+        },
+        order: {
+          select: {
+            party: {
+              select: {
+                name: true,
+                address: true,
+                gstin: true,
+                stateCode: true,
+              },
+            },
+          },
+        },
       },
     });
 

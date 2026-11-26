@@ -26,7 +26,8 @@ function main() {
     execSync('npx prisma db push --force-reset', { stdio: 'inherit' });
     execSync('npx tsx scripts/apply-roles.ts', { stdio: 'inherit' });
     execSync('npx tsx prisma/seed.ts', { stdio: 'inherit' });
-    console.log('✅ Local database reset and re-seeded successfully.');
+    execSync('npx tsx prisma/apply-triggers.ts', { stdio: 'inherit' });
+    console.log('✅ Local database reset, seeded, and hardened successfully.');
   } catch (err) {
     console.error('Failed to parse or reset database:', err);
     process.exit(1);

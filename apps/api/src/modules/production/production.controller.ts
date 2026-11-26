@@ -1,4 +1,5 @@
-import { Controller, Post, Get, Param, Body, Inject } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, Inject, ParseUUIDPipe } from '@nestjs/common';
+import { z } from 'zod';
 import { ProductionService } from './production.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
@@ -9,6 +10,31 @@ import {
 } from '@snackflow/shared';
 import { ZodValidationPipe } from '../../core/pipes/zod-validation.pipe.js';
 
+const CreateProductionDraftSchema = z.object({
+  recipeId: z.string().uuid(),
+  fgItemId: z.string().uuid(),
+  batchFactor: z.number().positive().default(1.0),
+});
+
+const PostProductionRunSchema = z.object({
+  actualInputs: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        actualQty: z.number().nonnegative(),
+        uom: z.string().min(1),
+      }),
+    )
+    .min(1),
+  goodOutputQty: z.number().nonnegative(),
+  damagedPackagingQty: z.number().nonnegative().optional(),
+  cartonsUsed: z.number().nonnegative().optional(),
+});
+
+const CloseProductionRunSchema = z.object({
+  overheadAmount: z.number().nonnegative(),
+});
+
 @Controller('production/runs')
 export class ProductionController {
   constructor(@Inject(ProductionService) private readonly productionService: ProductionService) {}
@@ -17,7 +43,7 @@ export class ProductionController {
   @Post(':id/qc')
   async recordQc(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(CreateQcCheckpointSchema)) dto: CreateQcCheckpointDto,
   ) {
     return this.productionService.recordQcCheckpoint(user.companyId, id, user.userId, dto);
@@ -27,7 +53,7 @@ export class ProductionController {
   @Get(':id/qc')
   async getQc(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.productionService.getQcCheckpoint(user.companyId, id);
   }
@@ -36,13 +62,14 @@ export class ProductionController {
   @Post('draft')
   async createDraft(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() body: { recipeId: string; fgItemId: string; batchFactor?: number },
+    @Body(new ZodValidationPipe(CreateProductionDraftSchema))
+    body: z.infer<typeof CreateProductionDraftSchema>,
   ) {
     return this.productionService.createDraftRun(
       user.companyId,
       body.recipeId,
       body.fgItemId,
-      body.batchFactor || 1.0,
+      body.batchFactor,
     );
   }
 
@@ -50,24 +77,32 @@ export class ProductionController {
   @Post(':id/post')
   async postRun(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-    @Body()
-    body: {
-      actualInputs: { itemId: string; actualQty: number; uom: string }[];
-      goodOutputQty: number;
-      damagedPackagingQty?: number;
-      cartonsUsed?: number;
-    },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(PostProductionRunSchema))
+    body: z.infer<typeof PostProductionRunSchema>,
   ) {
-    return this.productionService.postRun(user.companyId, id, body, user.userId);
+    return this.productionService.postRun(
+      user.companyId,
+      id,
+      {
+        actualInputs: body.actualInputs,
+        goodOutputQty: body.goodOutputQty,
+        ...(body.damagedPackagingQty !== undefined
+          ? { damagedPackagingQty: body.damagedPackagingQty }
+          : {}),
+        ...(body.cartonsUsed !== undefined ? { cartonsUsed: body.cartonsUsed } : {}),
+      },
+      user.userId,
+    );
   }
 
   @RequirePermission(Permission.PRODUCTION_CLOSE)
   @Post(':id/close')
   async closeRun(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-    @Body() body: { overheadAmount: number },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(CloseProductionRunSchema))
+    body: z.infer<typeof CloseProductionRunSchema>,
   ) {
     return this.productionService.closeRun(user.companyId, id, body.overheadAmount, user.userId);
   }
@@ -76,7 +111,7 @@ export class ProductionController {
   @Post(':id/reverse')
   async reverseRun(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.productionService.reverseRun(user.companyId, id, user.userId);
   }
@@ -85,7 +120,7 @@ export class ProductionController {
   @Get(':id')
   async getRun(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.productionService.getRun(user.companyId, id);
   }

@@ -230,7 +230,7 @@ function LoginFormContent() {
 
               return (
                 <button
-                  key={acc.role}
+                  key={acc.email}
                   type="button"
                   onClick={() => handleQuickLogin(acc)}
                   disabled={loading}

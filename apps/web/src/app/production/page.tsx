@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getStoredSession } from '@/lib/api';
 import { toDecimal } from '@snackflow/shared';
 import { RbacGate } from '@/components/common/RbacGate';
 import {
@@ -16,39 +16,35 @@ import {
   RefreshCw,
   Coins,
   ShieldCheck,
-  Activity,
   Wrench,
-  Clock,
-  Check,
-  X,
   ShieldAlert,
 } from 'lucide-react';
 
 export default function ProductionWizardPage() {
-  const [activeMainTab, setActiveMainTab] = useState<'WIZARD' | 'EQUIPMENT'>('WIZARD');
+  const [activeMainTab, setActiveMainTab] = useState<'WIZARD' | 'OVERHEADS' | 'EQUIPMENT'>('WIZARD');
   const [currentStep, setCurrentStep] = useState<number>(1);
-  const [_recipes, setRecipes] = useState<any[]>([]);
+  const [recipes, setRecipes] = useState<any[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<any | null>(null);
-  const [_fgItems, setFgItems] = useState<any[]>([]);
+  const [fgItems, setFgItems] = useState<any[]>([]);
   const [selectedFgItem, setSelectedFgItem] = useState<any | null>(null);
   const [batchFactor] = useState<number>(1.0);
   const [stockBalances, setStockBalances] = useState<any[]>([]);
 
   // Active Draft Run
   const [draftRun, setDraftRun] = useState<any | null>(null);
-  const [_isCreatingDraft, setIsCreatingDraft] = useState<boolean>(false);
+  const [isCreatingDraft, setIsCreatingDraft] = useState<boolean>(false);
 
   // Step 1: Material actual inputs (itemId -> actualQty)
   const [actualInputs, setActualInputs] = useState<Record<string, number>>({});
 
   // Step 2: Output and Wastage
-  const [goodOutputQty, setGoodOutputQty] = useState<number>(188);
-  const [damagedPouchesQty, setDamagedPouchesQty] = useState<number>(6);
-  const [cartonsUsedQty, setCartonsUsedQty] = useState<number>(9);
+  const [goodOutputQty, setGoodOutputQty] = useState<number>(200);
+  const [damagedPouchesQty, setDamagedPouchesQty] = useState<number>(0);
+  const [cartonsUsedQty, setCartonsUsedQty] = useState<number>(10);
 
   // Quality Control (QC) Gate Checkpoint State
   const [qcMoisture, setQcMoisture] = useState<number>(2.1);
-  const [qcPeroxide, setQcPeroxide] = useState<number>(3.2);
+  const [qcPeroxide] = useState<number>(3.2);
   const [qcTasteCrunch, setQcTasteCrunch] = useState<boolean>(true);
   const [qcSealIntegrity, setQcSealIntegrity] = useState<boolean>(true);
   const [qcWeight, setQcWeight] = useState<number>(201.5);
@@ -69,27 +65,65 @@ export default function ProductionWizardPage() {
   const [resolutionNotes, setResolutionNotes] = useState<string>('');
 
   // Inward Stock / GRN Refill Modal State
+  const INWARD_SKU_DEFAULTS: Record<string, { cost: number; uom: string }> = {
+    'RAW-FLOUR': { cost: 42.0, uom: 'KG' },
+    'RAW-OIL': { cost: 140.0, uom: 'L' },
+    'RAW-SPICE': { cost: 200.0, uom: 'KG' },
+    'PKG-POUCH-200G': { cost: 2.5, uom: 'PCS' },
+    'PKG-CARTON-20PKT': { cost: 15.0, uom: 'PCS' },
+    'FG-RIB-200G': { cost: 32.0, uom: 'PKT' },
+  };
   const [inwardModalOpen, setInwardModalOpen] = useState<boolean>(false);
   const [inwardSku, setInwardSku] = useState<string>('RAW-FLOUR');
   const [inwardQty, setInwardQty] = useState<number>(100);
+  const [inwardUnitCost, setInwardUnitCost] = useState<number>(42.0);
   const [inwardVendor, setInwardVendor] = useState<string>('Thanjavur Agro Mills, Tiruchirappalli');
   const [inwardGrnNo, setInwardGrnNo] = useState<string>('GRN-2026-0045');
   const [isSubmittingInward, setIsSubmittingInward] = useState<boolean>(false);
 
   const handleInwardStock = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!(Number(inwardQty) > 0) || !(Number(inwardUnitCost) > 0)) {
+      alert('Please enter a valid positive quantity and unit price.');
+      return;
+    }
     setIsSubmittingInward(true);
     try {
-      const res = await apiFetch('/inventory/inward', {
-        method: 'POST',
-        body: JSON.stringify({
-          sku: inwardSku,
-          qty: Number(inwardQty),
-          vendor: inwardVendor,
-          grnNo: inwardGrnNo,
-        }),
-      });
-      alert(res.message || 'Goods Receipt Note posted and stock received!');
+      const [catalogItems, suppliers] = await Promise.all([
+        apiFetch<any[]>('/catalog/items'),
+        apiFetch<any[]>('/parties?kind=SUPPLIER'),
+      ]);
+      const matchedItem = catalogItems.find((i: any) => i.sku === inwardSku);
+      const supplierParty = suppliers[0];
+
+      if (matchedItem && supplierParty) {
+        const meta = INWARD_SKU_DEFAULTS[inwardSku] || { cost: 50.0, uom: matchedItem.baseUom || 'KG' };
+        const effectiveCost = Number(inwardUnitCost) || meta.cost;
+        await apiFetch('/purchases', {
+          method: 'POST',
+          body: JSON.stringify({
+            partyId: supplierParty.id,
+            invoiceNo: inwardGrnNo || `GRN-${Date.now().toString().slice(-6)}`,
+            lines: [
+              {
+                itemId: matchedItem.id,
+                qty: Number(inwardQty),
+                unitCost: effectiveCost,
+                uom: meta.uom,
+              },
+            ],
+          }),
+        });
+        alert(
+          `Goods Receipt Note posted: ${Number(inwardQty)} ${meta.uom} @ ₹${effectiveCost.toFixed(2)} = ₹${(
+            Number(inwardQty) * effectiveCost
+          ).toFixed(2)}. Stock & WAC updated!`,
+        );
+        setInwardGrnNo(`GRN-${Date.now().toString().slice(-6)}`);
+      } else {
+        throw new Error('Matching catalog item or supplier party not found in database.');
+      }
+
       const updated = await apiFetch('/inventory/balances');
       if (Array.isArray(updated)) setStockBalances(updated);
       setInwardModalOpen(false);
@@ -103,11 +137,37 @@ export default function ProductionWizardPage() {
   const handleQuickRefillAll = async () => {
     setIsSubmittingInward(true);
     try {
-      const res = await apiFetch('/inventory/inward', {
+      const [catalogItems, suppliers] = await Promise.all([
+        apiFetch<any[]>('/catalog/items'),
+        apiFetch<any[]>('/parties?kind=SUPPLIER'),
+      ]);
+      const supplierParty = suppliers[0];
+      if (!supplierParty) {
+        throw new Error('No supplier party configured in master data.');
+      }
+      const refillDefs = [
+        { sku: 'RAW-FLOUR', qty: 200, unitCost: 42.0, uom: 'KG' },
+        { sku: 'RAW-OIL', qty: 50, unitCost: 140.0, uom: 'L' },
+        { sku: 'RAW-SPICE', qty: 20, unitCost: 200.0, uom: 'KG' },
+        { sku: 'PKG-POUCH-200G', qty: 500, unitCost: 2.5, uom: 'PCS' },
+        { sku: 'PKG-CARTON-20PKT', qty: 30, unitCost: 15.0, uom: 'PCS' },
+      ];
+      const lines = refillDefs
+        .map((r) => {
+          const item = catalogItems.find((i: any) => i.sku === r.sku);
+          return item ? { itemId: item.id, qty: r.qty, unitCost: r.unitCost, uom: r.uom } : null;
+        })
+        .filter(Boolean);
+
+      await apiFetch('/purchases', {
         method: 'POST',
-        body: JSON.stringify({ quickRefillAll: true }),
+        body: JSON.stringify({
+          partyId: supplierParty.id,
+          invoiceNo: `REFILL-${Date.now().toString().slice(-6)}`,
+          lines,
+        }),
       });
-      alert(res.message || 'Full store room refill successful! Added +200 KG Flour, +50 L Oil, +500 Pouches.');
+      alert('Full store room refill successful! Added +200 KG Flour, +50 L Oil, +20 KG Spice Mix, +500 Pouches, +30 Cartons.');
       const updated = await apiFetch('/inventory/balances');
       if (Array.isArray(updated)) setStockBalances(updated);
       setInwardModalOpen(false);
@@ -119,33 +179,42 @@ export default function ProductionWizardPage() {
   };
 
   const handleResetToBenchmark = async () => {
-    if (!confirm('Reset all inventory and orders back to initial benchmark opening stock?')) return;
-    setIsSubmittingInward(true);
-    try {
-      await apiFetch('/inventory/reset', { method: 'POST' });
-      alert('Store room reset to benchmark opening balances (120 KG Flour, 19.5 L Oil)!');
-      const updated = await apiFetch('/inventory/balances');
-      if (Array.isArray(updated)) setStockBalances(updated);
-      setInwardModalOpen(false);
-    } catch (err: any) {
-      alert(`Reset error: ${err.message}`);
-    } finally {
-      setIsSubmittingInward(false);
-    }
+    alert('Database reset is disabled in connected server mode. Use local CLI seed tools if resetting local test data.');
   };
 
   // Step 3: Posting & Close-out
   const [isPosting, setIsPosting] = useState<boolean>(false);
-  const [_postedResult, setPostedResult] = useState<any | null>(null);
+  const [postedResult, setPostedResult] = useState<any | null>(null);
 
-  // Close Run Overheads
-  const [overheadAmount, setOverheadAmount] = useState<number>(1800);
+  // Close Run Overheads (Labour + Gas/Power split summing to total overhead)
+  const [labourCost, setLabourCost] = useState<number>(1200);
+  const [gasPowerCost, setGasPowerCost] = useState<number>(600);
+  const overheadAmount = Math.max(0, Number(labourCost || 0) + Number(gasPowerCost || 0));
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [closedResult, setClosedResult] = useState<any | null>(null);
+  const [productionRuns, setProductionRuns] = useState<any[]>([]);
+  const [closingRunId, setClosingRunId] = useState<string | null>(null);
+  const [closeoutByRun, setCloseoutByRun] = useState<Record<string, any>>({});
+
+  const loadProductionRuns = async () => {
+    try {
+      const rep = await apiFetch<any>('/reports/production');
+      if (Array.isArray(rep?.rows)) {
+        setProductionRuns(rep.rows);
+      }
+    } catch (e) {
+      console.warn('Could not load production runs report', e);
+    }
+  };
 
   useEffect(() => {
+    const session = getStoredSession();
+    if (!session || !['PRODUCTION', 'ADMIN', 'OWNER'].includes(session.role)) {
+      return;
+    }
     loadRecipesAndFg();
     loadEquipment();
+    loadProductionRuns();
 
     const handleStorage = () => {
       loadEquipment();
@@ -157,6 +226,8 @@ export default function ProductionWizardPage() {
   useEffect(() => {
     if (activeMainTab === 'EQUIPMENT') {
       loadEquipment();
+    } else if (activeMainTab === 'OVERHEADS') {
+      loadProductionRuns();
     }
   }, [activeMainTab]);
 
@@ -253,13 +324,31 @@ export default function ProductionWizardPage() {
     }
   };
 
+  const selectRecipe = (recipe: any) => {
+    setSelectedRecipe(recipe);
+    const matchingFg = fgItems.find((i: any) => i.sku === recipe.sku || i.id === recipe.fgItemId) || fgItems[0];
+    if (matchingFg) setSelectedFgItem(matchingFg);
+    setDraftRun(null);
+
+    // Pre-fill inputs with recipe standard
+    const inputs: Record<string, number> = {};
+    recipe.recipeLines.forEach((l: any) => {
+      inputs[l.itemId] = l.stdQty;
+    });
+    setActualInputs(inputs);
+
+    // Pre-fill good output matching standard yield (0% variance by default)
+    const stdPkts = recipe.stdOutputPkts || 200;
+    setGoodOutputQty(stdPkts);
+    setDamagedPouchesQty(0);
+    setCartonsUsedQty(Math.floor(stdPkts / 20));
+    setCurrentStep(1);
+  };
+
   const loadRecipesAndFg = async () => {
     try {
       const items = await apiFetch('/catalog/items?kind=FINISHED');
       setFgItems(items);
-      if (items.length > 0) {
-        setSelectedFgItem(items[0]);
-      }
 
       // Fetch recipes
       const catalogItems = await apiFetch('/catalog/items');
@@ -267,20 +356,47 @@ export default function ProductionWizardPage() {
       const oil = catalogItems.find((i: any) => i.sku === 'RAW-OIL');
       const spice = catalogItems.find((i: any) => i.sku === 'RAW-SPICE');
 
-      // Standard Murukku 200g Recipe
-      const defaultRecipe = {
+      const murukkuFg = items.find((i: any) => i.sku === 'FG-MUR-200G') || items[0];
+      const ribbonFg = items.find((i: any) => i.sku === 'FG-RIB-200G');
+
+      // 1. Standard Murukku 200g Recipe (200 PKT / 40 KG output)
+      const murukkuRecipe = {
         id: '00000000-0000-0000-0000-000000000020',
         productFamily: 'Murukku (முறுக்கு)',
+        name: 'Murukku 200g (முறுக்கு)',
+        sku: 'FG-MUR-200G',
+        fgItemId: murukkuFg?.id || 'fg-mur-200g',
         batchOutputKg: 40.0,
+        stdOutputPkts: 200,
         tolerancePct: 3.0,
         recipeLines: [
-          { itemId: flour?.id, itemName: 'Rice Flour (அரிசி மாவு)', stdQty: 40.0, uom: 'KG' },
-          { itemId: oil?.id, itemName: 'Cooking Oil (எண்ணெய்)', stdQty: 10.0, uom: 'L' },
-          { itemId: spice?.id, itemName: 'Spice Mix (மசாலா)', stdQty: 1.2, uom: 'KG' },
+          { itemId: flour?.id || 'raw-flour', sku: 'RAW-FLOUR', itemName: 'Rice Flour (அரிசி மாவு)', stdQty: 40.0, uom: 'KG' },
+          { itemId: oil?.id || 'raw-oil', sku: 'RAW-OIL', itemName: 'Cooking Oil (எண்ணெய்)', stdQty: 10.0, uom: 'L' },
+          { itemId: spice?.id || 'raw-spice', sku: 'RAW-SPICE', itemName: 'Spice Mix (மசாலா)', stdQty: 1.2, uom: 'KG' },
         ],
       };
-      setRecipes([defaultRecipe]);
-      setSelectedRecipe(defaultRecipe);
+
+      // 2. Standard Ribbon Pakoda 200g Recipe (100 PKT / 20 KG output)
+      const ribbonRecipe = {
+        id: '00000000-0000-0000-0000-000000000021',
+        productFamily: 'Ribbon Pakoda (ரிப்பன் பக்கோடா)',
+        name: 'Ribbon Pakoda 200g (ரிப்பன் பக்கோடா)',
+        sku: 'FG-RIB-200G',
+        fgItemId: ribbonFg?.id || 'fg-rib-200g',
+        batchOutputKg: 20.0,
+        stdOutputPkts: 100,
+        tolerancePct: 3.0,
+        recipeLines: [
+          { itemId: flour?.id || 'raw-flour', sku: 'RAW-FLOUR', itemName: 'Gram & Rice Flour Mix (கடலை / அரிசி மாவு)', stdQty: 20.0, uom: 'KG' },
+          { itemId: oil?.id || 'raw-oil', sku: 'RAW-OIL', itemName: 'Cooking Oil (எண்ணெய்)', stdQty: 5.0, uom: 'L' },
+          { itemId: spice?.id || 'raw-spice', sku: 'RAW-SPICE', itemName: 'Spice Mix & Chilli (மசாலா)', stdQty: 0.8, uom: 'KG' },
+        ],
+      };
+
+      const recipeList = [murukkuRecipe, ribbonRecipe];
+      setRecipes(recipeList);
+      setSelectedRecipe(murukkuRecipe);
+      if (murukkuFg) setSelectedFgItem(murukkuFg);
 
       // Load live raw material stock balances
       try {
@@ -294,17 +410,20 @@ export default function ProductionWizardPage() {
 
       // Initialize inputs with standard
       setActualInputs({
-        [flour?.id || 'flour']: 40.0,
-        [oil?.id || 'oil']: 10.5, // 10.5 in Section 5 benchmark
-        [spice?.id || 'spice']: 1.2,
+        [flour?.id || 'raw-flour']: 40.0,
+        [oil?.id || 'raw-oil']: 10.0,
+        [spice?.id || 'raw-spice']: 1.2,
       });
+      setGoodOutputQty(200);
+      setDamagedPouchesQty(0);
+      setCartonsUsedQty(10);
     } catch (e) {
       console.warn('Could not load recipe details', e);
     }
   };
 
-  const handleStartDraft = async () => {
-    if (!selectedRecipe || !selectedFgItem) return;
+  const handleStartDraft = async (keepStep = false) => {
+    if (!selectedRecipe || !selectedFgItem) return null;
     setIsCreatingDraft(true);
     try {
       const draft = await apiFetch('/production/runs/draft', {
@@ -316,24 +435,28 @@ export default function ProductionWizardPage() {
         }),
       });
       setDraftRun(draft);
-      setCurrentStep(1);
+      if (!keepStep) {
+        setCurrentStep(1);
+      }
+      return draft;
     } catch (e: any) {
       alert(`Could not start run: ${e.message}`);
+      return null;
     } finally {
       setIsCreatingDraft(false);
     }
   };
 
   const handlePostRun = async () => {
-    const activeRun = draftRun || { id: 'run-draft-001', batchNo: 'BATCH-2026-11-24-01' };
+    let activeRun = draftRun;
 
     // Check if any actual input exceeds stock
     const excessInput = Object.entries(actualInputs).find(([itemId, actualQty]) => {
       const line = selectedRecipe?.recipeLines?.find((l: any) => l.itemId === itemId);
       const match = stockBalances.find(
-        (b) => b.sku === line?.sku || b.itemId === itemId || (line?.itemName && b.name?.includes(line.itemName.split(' ')[0]))
+        (b) => (b.sku || b.item?.sku) === line?.sku || b.itemId === itemId || (line?.itemName && (b.name || b.item?.name)?.includes(line.itemName.split(' ')[0]))
       );
-      const onHand = match ? match.qty : (line?.itemName?.includes('Flour') ? 120.0 : line?.itemName?.includes('Oil') ? 19.5 : 3.8);
+      const onHand = Number(match ? match.qty : (line?.itemName?.includes('Flour') ? 120.0 : line?.itemName?.includes('Oil') ? 19.5 : 3.8));
       return Number(actualQty) > onHand;
     });
 
@@ -348,6 +471,23 @@ export default function ProductionWizardPage() {
     }
     setIsPosting(true);
     try {
+      if (!activeRun && selectedRecipe) {
+        const createdDraft = await apiFetch('/production/runs/draft', {
+          method: 'POST',
+          body: JSON.stringify({
+            recipeId: selectedRecipe.id,
+            fgItemId: selectedFgItem?.id || selectedRecipe.fgItemId,
+            batchFactor,
+          }),
+        });
+        activeRun = createdDraft;
+        setDraftRun(createdDraft);
+      }
+
+      if (!activeRun?.id) {
+        throw new Error('Could not initialize production run draft.');
+      }
+
       // 1. Ensure QC is recorded & signed off before post
       await apiFetch(`/production/runs/${activeRun.id}/qc`, {
         method: 'POST',
@@ -364,6 +504,10 @@ export default function ProductionWizardPage() {
 
       // 2. Post the production run
       const payload = {
+        recipeId: selectedRecipe?.id,
+        fgItemId: selectedFgItem?.id,
+        fgSku: selectedRecipe?.sku,
+        recipeName: selectedRecipe?.name,
         actualInputs: Object.entries(actualInputs).map(([itemId, actualQty]) => ({
           itemId,
           actualQty: Number(actualQty),
@@ -395,14 +539,19 @@ export default function ProductionWizardPage() {
   };
 
   const handleCloseRun = async () => {
-    const activeRun = draftRun || { id: 'run-draft-001', batchNo: 'BATCH-2026-11-24-01' };
+    const runId = postedResult?.id || draftRun?.id;
+    if (!runId) {
+      alert('No posted production run found to close.');
+      return;
+    }
     setIsClosing(true);
     try {
-      const res = await apiFetch(`/production/runs/${activeRun.id}/close`, {
+      const res = await apiFetch(`/production/runs/${runId}/close`, {
         method: 'POST',
         body: JSON.stringify({ overheadAmount: Number(overheadAmount) }),
       });
       setClosedResult(res);
+      await loadProductionRuns();
     } catch (e: any) {
       alert(`Close error: ${e.message}`);
     } finally {
@@ -410,19 +559,46 @@ export default function ProductionWizardPage() {
     }
   };
 
+  const handleCloseSpecificRun = async (runId: string) => {
+    const total = Number(labourCost || 0) + Number(gasPowerCost || 0);
+    if (!(total > 0)) {
+      alert('Enter a valid Labour + Gas/Power overhead total.');
+      return;
+    }
+    setClosingRunId(runId);
+    try {
+      const res = await apiFetch(`/production/runs/${runId}/close`, {
+        method: 'POST',
+        body: JSON.stringify({ overheadAmount: total }),
+      });
+      setCloseoutByRun((prev) => ({ ...prev, [runId]: res }));
+      await loadProductionRuns();
+    } catch (e: any) {
+      alert(`Close error: ${e.message}`);
+    } finally {
+      setClosingRunId(null);
+    }
+  };
+
   // Calculations for Step 3 live variances
-  const expectedOutputPkts = 200 * batchFactor;
-  const yieldVariancePct = ((goodOutputQty - expectedOutputPkts) / expectedOutputPkts) * 100;
+  const expectedOutputPkts = (selectedRecipe?.stdOutputPkts || 200) * batchFactor;
+  const yieldVariancePct = expectedOutputPkts > 0
+    ? ((goodOutputQty - expectedOutputPkts) / expectedOutputPkts) * 100
+    : 0;
   const isYieldFlagged = Math.abs(yieldVariancePct) > 3.0;
 
-  const oilStd = 10.0 * batchFactor;
-  const oilActual = actualInputs[selectedRecipe?.recipeLines?.[1]?.itemId] || 10.5;
-  const oilVariancePct = ((oilActual - oilStd) / oilStd) * 100;
+  const oilStd = (selectedRecipe?.recipeLines?.[1]?.stdQty || 10.0) * batchFactor;
+  const oilActual = actualInputs[selectedRecipe?.recipeLines?.[1]?.itemId] ?? (selectedRecipe?.sku === 'FG-RIB-200G' ? 5.0 : 10.0);
+  const oilVariancePct = oilStd > 0
+    ? ((oilActual - oilStd) / oilStd) * 100
+    : 0;
   const isOilFlagged = Math.abs(oilVariancePct) > 3.0;
 
-  const pouchStd = goodOutputQty;
+  const pouchStd = expectedOutputPkts;
   const pouchActual = goodOutputQty + damagedPouchesQty;
-  const pouchVariancePct = ((pouchActual - pouchStd) / pouchStd) * 100;
+  const pouchVariancePct = pouchStd > 0
+    ? ((pouchActual - pouchStd) / pouchStd) * 100
+    : 0;
   const isPouchFlagged = Math.abs(pouchVariancePct) > 3.0;
 
   return (
@@ -448,7 +624,7 @@ export default function ProductionWizardPage() {
 
       {/* Top View Switcher Pill */}
       <div className="flex justify-center mb-8">
-        <div className="inline-flex bg-stone-100 p-1 rounded-2xl border border-stone-200 text-xs font-semibold shadow-xs">
+        <div className="inline-flex flex-wrap justify-center bg-stone-100 p-1 rounded-2xl border border-stone-200 text-xs font-semibold shadow-xs gap-1">
           <button
             onClick={() => setActiveMainTab('WIZARD')}
             className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
@@ -457,6 +633,20 @@ export default function ProductionWizardPage() {
           >
             <Factory className="w-4 h-4 text-amber-600" />
             <span>Batch Run Wizard</span>
+          </button>
+          <button
+            onClick={() => setActiveMainTab('OVERHEADS')}
+            className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
+              activeMainTab === 'OVERHEADS' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Coins className="w-4 h-4 text-amber-600" />
+            <span>Overhead Close-out &amp; Cost/PKT</span>
+            {productionRuns.filter((r) => r.status === 'POSTED').length > 0 && (
+              <span className="bg-amber-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
+                {productionRuns.filter((r) => r.status === 'POSTED').length}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveMainTab('EQUIPMENT')}
@@ -494,12 +684,28 @@ export default function ProductionWizardPage() {
                   Automated factory recommendation based on live pending customer demand:
                 </p>
                 <div className="flex flex-wrap items-center gap-2.5 mt-2 text-xs text-blue-950 font-semibold">
-                  <span className="bg-white/90 px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => selectRecipe(recipes.find((r: any) => r.sku === 'FG-MUR-200G') || recipes[0])}
+                    className={`px-3 py-1 rounded-lg border transition-all cursor-pointer ${
+                      selectedRecipe?.sku === 'FG-MUR-200G'
+                        ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                        : 'bg-white/90 hover:bg-white text-blue-950 border-blue-200 shadow-2xs'
+                    }`}
+                  >
                     Murukku 200g: <strong>Make 1 batch</strong> (200 PKT yield vs 150 PKT demand)
-                  </span>
-                  <span className="bg-white/90 px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
-                    Ribbon Pakoda: <strong>Make 1 batch</strong> (100 PKT yield to clear 100 PKT stockout)
-                  </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectRecipe(recipes.find((r: any) => r.sku === 'FG-RIB-200G') || recipes[1])}
+                    className={`px-3 py-1 rounded-lg border transition-all cursor-pointer ${
+                      selectedRecipe?.sku === 'FG-RIB-200G'
+                        ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                        : 'bg-white/90 hover:bg-white text-blue-950 border-blue-200 shadow-2xs'
+                    }`}
+                  >
+                    Ribbon Pakoda: <strong>Make 1 batch</strong> (100 PKT yield to clear 100 PKT stockout) ⚡
+                  </button>
                 </div>
               </div>
             </div>
@@ -544,15 +750,67 @@ export default function ProductionWizardPage() {
         {/* Step 1: Issue Materials */}
         {currentStep === 1 && (
           <div className="space-y-6">
+            {/* Recipe Selection Tabs */}
+            <div className="p-4 rounded-2xl bg-amber-50/60 border-2 border-amber-200/80 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-black text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-amber-600" />
+                    Select Production Recipe BOM • தயாரிப்பு செய்முறை தேர்வு
+                  </span>
+                  <p className="text-xs text-amber-900/80 mt-0.5">
+                    Choose standard recipe to auto-populate Bill of Materials and target batch yield:
+                  </p>
+                </div>
+                <span className="text-xs bg-amber-600 text-white font-black px-3 py-1 rounded-lg shadow-xs self-start sm:self-auto">
+                  Active: {selectedRecipe?.name || 'Murukku 200g'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {recipes.map((rec: any) => {
+                  const isSelected = selectedRecipe?.id === rec.id;
+                  return (
+                    <button
+                      key={rec.id}
+                      type="button"
+                      onClick={() => selectRecipe(rec)}
+                      className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-center justify-between cursor-pointer ${
+                        isSelected
+                          ? 'border-amber-600 bg-white shadow-sm ring-2 ring-amber-500/20'
+                          : 'border-amber-200/70 bg-white/70 hover:bg-white hover:border-amber-300'
+                      }`}
+                    >
+                      <div>
+                        <div className={`text-sm font-black ${isSelected ? 'text-amber-950' : 'text-stone-800'}`}>
+                          {rec.name}
+                        </div>
+                        <div className="text-xs text-stone-500 mt-0.5 font-medium">
+                          Std Output: <strong>{rec.stdOutputPkts} PKT ({rec.batchOutputKg} KG)</strong> • {rec.recipeLines?.length || 3} Ingredients
+                        </div>
+                      </div>
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-stone-100 text-stone-600 border-stone-200'
+                      }`}>
+                        {isSelected ? 'Active BOM' : 'Switch Recipe'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="flex items-center justify-between pb-4 border-b border-stone-100">
               <div>
                 <h2 className="text-lg font-bold text-stone-900">Step 1: Material Consumption</h2>
                 <p className="text-xs text-stone-500">
-                  Pre-filled with standard BOM recipe for 1 batch of Murukku (40 kg output). Edit actuals.
+                  Pre-filled with standard BOM recipe for 1 batch of {selectedRecipe?.name || 'Murukku'} ({selectedRecipe?.batchOutputKg || 40} kg output). Edit actuals.
                 </p>
               </div>
-              <span className="text-xs bg-amber-50 text-amber-800 font-bold px-3 py-1 rounded-lg border border-amber-200">
-                Recipe: Murukku 200g
+              <span className="text-xs bg-amber-100 text-amber-900 font-bold px-3 py-1 rounded-lg border border-amber-300">
+                Recipe: {selectedRecipe?.name || 'Murukku 200g'}
               </span>
             </div>
 
@@ -584,8 +842,8 @@ export default function ProductionWizardPage() {
                   { sku: 'RAW-SPICE', name: 'Spice Mix (மசாலா)', defaultQty: 3.8, uom: 'KG' },
                   { sku: 'PKG-POUCH-200G', name: 'Printed Pouches 200g', defaultQty: 306.0, uom: 'PCS' },
                 ].map((item) => {
-                  const match = stockBalances.find((b) => b.sku === item.sku || (b.name && b.name.includes(item.sku.split('-')[1])));
-                  const qty = match ? match.qty : item.defaultQty;
+                  const match = stockBalances.find((b) => (b.sku || b.item?.sku) === item.sku || ((b.name || b.item?.name) && (b.name || b.item?.name).includes(item.sku.split('-')[1])));
+                  const qty = Number(match ? match.qty : item.defaultQty);
                   return (
                     <div key={item.sku} className="bg-white p-3 rounded-xl border border-amber-200 shadow-2xs">
                       <div className="text-[11px] font-bold text-stone-600 truncate">{item.name}</div>
@@ -605,12 +863,12 @@ export default function ProductionWizardPage() {
             {(() => {
               const stockErrors = (selectedRecipe?.recipeLines || []).filter((line: any) => {
                 const match = stockBalances.find(
-                  (b) => b.sku === line.sku || b.itemId === line.itemId || (line.itemName && b.name?.includes(line.itemName.split(' ')[0]))
+                  (b) => (b.sku || b.item?.sku) === line.sku || b.itemId === line.itemId || (line.itemName && (b.name || b.item?.name)?.includes(line.itemName.split(' ')[0]))
                 );
-                const onHand = match
+                const onHand = Number(match
                   ? match.qty
-                  : (line.itemName?.includes('Flour') ? 120.0 : line.itemName?.includes('Oil') ? 19.5 : 3.8);
-                const actualVal = actualInputs[line.itemId] ?? line.stdQty;
+                  : (line.itemName?.includes('Flour') ? 120.0 : line.itemName?.includes('Oil') ? 19.5 : 3.8));
+                const actualVal = Number(actualInputs[line.itemId] ?? line.stdQty);
                 return actualVal > onHand;
               });
               const hasInsufficientStock = stockErrors.length > 0;
@@ -620,12 +878,12 @@ export default function ProductionWizardPage() {
                   <div className="space-y-4">
                     {selectedRecipe?.recipeLines?.map((line: any) => {
                       const match = stockBalances.find(
-                        (b) => b.sku === line.sku || b.itemId === line.itemId || (line.itemName && b.name?.includes(line.itemName.split(' ')[0]))
+                        (b) => (b.sku || b.item?.sku) === line.sku || b.itemId === line.itemId || (line.itemName && (b.name || b.item?.name)?.includes(line.itemName.split(' ')[0]))
                       );
-                      const onHand = match
+                      const onHand = Number(match
                         ? match.qty
-                        : (line.itemName?.includes('Flour') ? 120.0 : line.itemName?.includes('Oil') ? 19.5 : 3.8);
-                      const actualVal = actualInputs[line.itemId] ?? line.stdQty;
+                        : (line.itemName?.includes('Flour') ? 120.0 : line.itemName?.includes('Oil') ? 19.5 : 3.8));
+                      const actualVal = Number(actualInputs[line.itemId] ?? line.stdQty);
                       const isExceeded = actualVal > onHand;
                       const batchesPossible = Math.floor(onHand / (line.stdQty || 1));
 
@@ -719,22 +977,27 @@ export default function ProductionWizardPage() {
 
                   <div className="flex justify-end pt-4 border-t border-stone-100">
                     <button
-                      disabled={hasInsufficientStock}
-                      onClick={() => {
+                      disabled={hasInsufficientStock || isCreatingDraft}
+                      onClick={async () => {
                         if (hasInsufficientStock) {
                           alert('Cannot proceed: entered raw material quantities exceed available store room stock.');
                           return;
                         }
-                        if (!draftRun) handleStartDraft();
+                        const activeDraft = draftRun || (await handleStartDraft(true));
+                        if (!activeDraft) return;
                         setCurrentStep(2);
                       }}
                       className={`flex items-center gap-2 font-bold text-xs px-6 py-3 rounded-xl shadow-md transition-all ${
-                        hasInsufficientStock
+                        hasInsufficientStock || isCreatingDraft
                           ? 'bg-stone-300 cursor-not-allowed text-stone-500 shadow-none'
                           : 'bg-amber-600 hover:bg-amber-700 active:scale-95 text-white shadow-amber-600/20'
                       }`}
                     >
-                      {hasInsufficientStock ? 'Cannot Proceed: Insufficient Stock' : 'Next: Output & Wastage'}
+                      {hasInsufficientStock
+                        ? 'Cannot Proceed: Insufficient Stock'
+                        : isCreatingDraft
+                          ? 'Creating Draft Run...'
+                          : 'Next: Output & Wastage'}
                       <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
@@ -767,7 +1030,7 @@ export default function ProductionWizardPage() {
                   onChange={(e) => setGoodOutputQty(parseInt(e.target.value, 10) || 0)}
                   className="w-full h-14 text-center text-xl font-black text-stone-900 bg-white border-2 border-emerald-300 rounded-xl focus:outline-hidden focus:border-emerald-600 shadow-xs"
                 />
-                <p className="text-[10px] text-stone-500 text-center">Standard Expected: 200 PKT</p>
+                <p className="text-[10px] text-stone-500 text-center">Standard Expected: {expectedOutputPkts} PKT</p>
               </div>
 
               {/* Damaged Pouches */}
@@ -797,7 +1060,9 @@ export default function ProductionWizardPage() {
                   onChange={(e) => setCartonsUsedQty(parseInt(e.target.value, 10) || 0)}
                   className="w-full h-14 text-center text-xl font-black text-stone-900 bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:border-amber-600 shadow-xs"
                 />
-                <p className="text-[10px] text-stone-500 text-center">9 full cartons + 8 loose packets</p>
+                <p className="text-[10px] text-stone-500 text-center">
+                  {Math.floor(goodOutputQty / 20)} full cartons + {goodOutputQty % 20} loose packets
+                </p>
               </div>
             </div>
 
@@ -834,7 +1099,7 @@ export default function ProductionWizardPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* Yield Variance */}
               <div
-                className={`p-4 rounded-2xl border ${
+                className={`p-4 rounded-2xl border transition-all ${
                   isYieldFlagged ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'
                 }`}
               >
@@ -846,21 +1111,25 @@ export default function ProductionWizardPage() {
                     isYieldFlagged ? 'text-rose-700' : 'text-emerald-700'
                   }`}
                 >
-                  {yieldVariancePct.toFixed(1)}%
+                  {yieldVariancePct > 0 ? `+${yieldVariancePct.toFixed(1)}%` : `${yieldVariancePct.toFixed(1)}%`}
                 </div>
                 <div className="text-xs text-stone-600 mt-1">
-                  188 actual vs 200 expected
+                  {goodOutputQty} actual vs {expectedOutputPkts} expected
                 </div>
-                {isYieldFlagged && (
+                {isYieldFlagged ? (
                   <span className="inline-block mt-2 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
                     FLAGGED (&gt; 3%)
+                  </span>
+                ) : (
+                  <span className="inline-block mt-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
+                    OPTIMAL (Within &plusmn;3%)
                   </span>
                 )}
               </div>
 
               {/* Oil Variance */}
               <div
-                className={`p-4 rounded-2xl border ${
+                className={`p-4 rounded-2xl border transition-all ${
                   isOilFlagged ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'
                 }`}
               >
@@ -872,21 +1141,25 @@ export default function ProductionWizardPage() {
                     isOilFlagged ? 'text-rose-700' : 'text-emerald-700'
                   }`}
                 >
-                  +{oilVariancePct.toFixed(1)}%
+                  {oilVariancePct > 0 ? `+${oilVariancePct.toFixed(1)}%` : `${oilVariancePct.toFixed(1)}%`}
                 </div>
                 <div className="text-xs text-stone-600 mt-1">
-                  10.5 L actual vs 10.0 L std
+                  {oilActual.toFixed(1)} L actual vs {oilStd.toFixed(1)} L std
                 </div>
-                {isOilFlagged && (
+                {isOilFlagged ? (
                   <span className="inline-block mt-2 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
                     FLAGGED (&gt; 3%)
+                  </span>
+                ) : (
+                  <span className="inline-block mt-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
+                    OPTIMAL (Within &plusmn;3%)
                   </span>
                 )}
               </div>
 
               {/* Pouch Variance */}
               <div
-                className={`p-4 rounded-2xl border ${
+                className={`p-4 rounded-2xl border transition-all ${
                   isPouchFlagged ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'
                 }`}
               >
@@ -898,14 +1171,18 @@ export default function ProductionWizardPage() {
                     isPouchFlagged ? 'text-rose-700' : 'text-emerald-700'
                   }`}
                 >
-                  +{pouchVariancePct.toFixed(2)}%
+                  {pouchVariancePct > 0 ? `+${pouchVariancePct.toFixed(2)}%` : `${pouchVariancePct.toFixed(2)}%`}
                 </div>
                 <div className="text-xs text-stone-600 mt-1">
-                  194 pouches vs 188 std
+                  {pouchActual} pouches vs {pouchStd} std
                 </div>
-                {isPouchFlagged && (
+                {isPouchFlagged ? (
                   <span className="inline-block mt-2 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
                     FLAGGED (&gt; 3%)
+                  </span>
+                ) : (
+                  <span className="inline-block mt-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
+                    OPTIMAL (Within &plusmn;3%)
                   </span>
                 )}
               </div>
@@ -1033,8 +1310,8 @@ export default function ProductionWizardPage() {
               </div>
               <p>
                 Posting will atomically write raw material OUT ledger movements at WAC, packaging OUT movements,
-                create finished goods batch <code className="bg-amber-100 px-1 py-0.5 rounded">MUR200-YYMMDD-NN</code>,
-                and credit 188 packets to finished goods inventory.
+                create finished goods batch <code className="bg-amber-100 px-1 py-0.5 rounded">{selectedRecipe?.sku?.split('-')[1] || 'MUR'}200-YYMMDD-NN</code>,
+                and credit {goodOutputQty} packets to finished goods inventory.
               </p>
             </div>
 
@@ -1072,7 +1349,7 @@ export default function ProductionWizardPage() {
                   Production Run Successfully Posted!
                 </h3>
                 <p className="text-xs text-emerald-800">
-                  Batch created: <span className="font-mono font-bold">MUR200-261120-01</span> • 188 packets added to FG stock.
+                  Batch created: <span className="font-mono font-bold">{postedResult?.outputs?.[0]?.batch?.batchNo || postedResult?.batchNo || draftRun?.number || 'POSTED'}</span> • {goodOutputQty} packets added to {selectedRecipe?.name || 'Finished Goods'} stock.
                 </p>
               </div>
             </div>
@@ -1091,21 +1368,42 @@ export default function ProductionWizardPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <label className="text-xs font-bold text-stone-700">Overhead Amount (₹):</label>
-                <input
-                  type="number"
-                  value={overheadAmount}
-                  onChange={(e) => setOverheadAmount(toDecimal(e.target.value || 0).toNumber())}
-                  className="w-36 h-10 px-3 font-bold text-sm bg-white border border-stone-300 rounded-xl"
-                />
-                <button
-                  onClick={handleCloseRun}
-                  disabled={isClosing}
-                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-colors"
-                >
-                  {isClosing ? 'Closing...' : 'Close Run & Allocate'}
-                </button>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Labour Cost (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={labourCost}
+                    onChange={(e) => setLabourCost(toDecimal(e.target.value || 0).toNumber())}
+                    className="w-full h-10 px-3 font-bold text-sm bg-white border border-stone-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Gas / Power (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={gasPowerCost}
+                    onChange={(e) => setGasPowerCost(toDecimal(e.target.value || 0).toNumber())}
+                    className="w-full h-10 px-3 font-bold text-sm bg-white border border-stone-300 rounded-xl"
+                  />
+                </div>
+                <div className="flex items-center justify-between sm:justify-end gap-3">
+                  <div className="text-xs">
+                    <div className="text-[10px] text-stone-500 font-semibold">Total Overhead</div>
+                    <div className="font-black text-stone-900">₹{overheadAmount.toLocaleString('en-IN')}</div>
+                  </div>
+                  <button
+                    onClick={handleCloseRun}
+                    disabled={isClosing}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-colors"
+                  >
+                    {isClosing ? 'Closing...' : 'Close Run & Allocate'}
+                  </button>
+                </div>
               </div>
 
               {closedResult && (
@@ -1148,6 +1446,122 @@ export default function ProductionWizardPage() {
         )}
       </div>
       </>
+      ) : activeMainTab === 'OVERHEADS' ? (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-stone-200 p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-stone-100">
+              <div>
+                <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+                  <Coins className="w-5 h-5 text-amber-600" />
+                  Overhead Allocation &amp; Batch Cost per Packet
+                </h2>
+                <p className="text-xs text-stone-500">
+                  Add Labour + Gas/Power overheads to any POSTED batch run and view final WAC cost per packet.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={loadProductionRuns}
+                className="text-xs font-bold px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 inline-flex items-center gap-1.5 self-start"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Refresh Runs
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl bg-amber-50/70 border border-amber-200">
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 mb-1">Labour Cost (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  aria-label="Labour Cost"
+                  value={labourCost}
+                  onChange={(e) => setLabourCost(toDecimal(e.target.value || 0).toNumber())}
+                  className="w-full h-10 px-3 font-bold text-sm bg-white border border-stone-300 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 mb-1">Gas / Power Cost (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  aria-label="Gas / Power Cost"
+                  value={gasPowerCost}
+                  onChange={(e) => setGasPowerCost(toDecimal(e.target.value || 0).toNumber())}
+                  className="w-full h-10 px-3 font-bold text-sm bg-white border border-stone-300 rounded-xl"
+                />
+              </div>
+              <div className="flex flex-col justify-center">
+                <span className="text-[11px] font-bold text-amber-900 uppercase">Combined Overhead</span>
+                <span className="text-lg font-black text-amber-950">
+                  ₹{overheadAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            {productionRuns.length === 0 ? (
+              <p className="text-xs text-stone-400 py-8 text-center">No posted or closed production runs found.</p>
+            ) : (
+              <div className="space-y-3">
+                {productionRuns.map((run) => {
+                  const closedInfo = closeoutByRun[run.id];
+                  const isPosted = run.status === 'POSTED';
+                  return (
+                    <div key={run.id} className="p-4 rounded-xl border border-stone-200 bg-stone-50/60 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="font-mono font-bold text-sm text-stone-900">{run.runNumber}</span>
+                          <span className="ml-2 font-mono text-xs text-stone-500">({run.batchNumber})</span>
+                          <span
+                            className={`ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              isPosted ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {run.status}
+                          </span>
+                        </div>
+                        <div className="text-xs font-bold text-stone-800">
+                          Output: {run.actualYield} PKT • Material: ₹{run.totalMaterialCost} • Overhead: ₹{run.totalOverheadCost} •{' '}
+                          <span className="text-amber-700 font-black">Cost/PKT: ₹{run.unitCost}</span>
+                        </div>
+                      </div>
+
+                      {isPosted && (
+                        <div className="flex items-center justify-between pt-2 border-t border-stone-200/80 text-xs">
+                          <span className="text-stone-600">
+                            Projected Cost/PKT after ₹{overheadAmount.toLocaleString('en-IN')} overhead:{' '}
+                            <strong className="text-amber-800">
+                              ₹{run.actualYield > 0 ? ((Number(run.totalBatchCost) + overheadAmount) / Number(run.actualYield)).toFixed(2) : run.unitCost}
+                            </strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCloseSpecificRun(run.id)}
+                            disabled={closingRunId === run.id}
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-xs disabled:opacity-50"
+                          >
+                            {closingRunId === run.id ? 'Closing...' : `Close ${run.runNumber} & Allocate`}
+                          </button>
+                        </div>
+                      )}
+
+                      {closedInfo && (
+                        <div className="p-2.5 bg-white rounded-lg border border-emerald-200 text-xs flex flex-wrap justify-between gap-2 text-emerald-900">
+                          <span>On-Hand Share: <strong>₹{Number(closedInfo.onHandShare).toFixed(2)}</strong></span>
+                          <span>Dispatched COGS Share: <strong>₹{Number(closedInfo.cogsShare).toFixed(2)}</strong></span>
+                          <span>Final Cost per Packet: <strong>₹{Number(closedInfo.finalUnitCost).toFixed(2)}</strong></span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       ) : (
         /* Machinery Health & Equipment Downtime Management */
         <div className="space-y-6">
@@ -1509,12 +1923,17 @@ export default function ProductionWizardPage() {
                 Or Enter Custom Supplier GRN
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-stone-700 mb-1">Material / SKU *</label>
                   <select
                     value={inwardSku}
-                    onChange={(e) => setInwardSku(e.target.value)}
+                    onChange={(e) => {
+                      const sku = e.target.value;
+                      setInwardSku(sku);
+                      const meta = INWARD_SKU_DEFAULTS[sku];
+                      if (meta) setInwardUnitCost(meta.cost);
+                    }}
                     className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
                   >
                     <option value="RAW-FLOUR">Rice Flour (அரிசி மாவு) - KG</option>
@@ -1527,10 +1946,12 @@ export default function ProductionWizardPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Quantity to Receive *</label>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                    Quantity ({INWARD_SKU_DEFAULTS[inwardSku]?.uom || 'UNIT'}) *
+                  </label>
                   <input
                     type="number"
-                    min="1"
+                    min="0.01"
                     step="any"
                     required
                     value={inwardQty}
@@ -1538,6 +1959,31 @@ export default function ProductionWizardPage() {
                     className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:outline-amber-600 font-bold"
                   />
                 </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                    Unit Price (₹ / {INWARD_SKU_DEFAULTS[inwardSku]?.uom || 'UNIT'}) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    value={inwardUnitCost}
+                    onChange={(e) => setInwardUnitCost(Number(e.target.value))}
+                    className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:outline-amber-600 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50/70 border border-amber-200 text-xs">
+                <span className="font-semibold text-amber-900">Purchase Line Total (updates WAC):</span>
+                <span className="font-extrabold text-amber-950 font-mono">
+                  ₹{((Number(inwardQty) || 0) * (Number(inwardUnitCost) || 0)).toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

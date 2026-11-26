@@ -5,14 +5,23 @@ import ExcelJS from 'exceljs';
 export class ExportService {
   private readonly logger = new Logger(ExportService.name);
 
+  private neutralizeCsvFormula(raw: string): string {
+    if (/^[=+\-@\t\r]/.test(raw)) {
+      return `'${raw}`;
+    }
+    return raw;
+  }
+
   // 1. Generate CSV from data rows and column definitions
   generateCsv(columns: { header: string; key: string }[], rows: Record<string, any>[]): string {
-    const headerLine = columns.map((c) => `"${c.header.replace(/"/g, '""')}"`).join(',');
+    const headerLine = columns
+      .map((c) => `"${this.neutralizeCsvFormula(c.header).replace(/"/g, '""')}"`)
+      .join(',');
     const dataLines = rows.map((row) =>
       columns
         .map((c) => {
           const val = row[c.key] ?? '';
-          const str = String(val).replace(/"/g, '""');
+          const str = this.neutralizeCsvFormula(String(val)).replace(/"/g, '""');
           return `"${str}"`;
         })
         .join(','),
@@ -68,20 +77,48 @@ export class ExportService {
     return Buffer.from(uint8Array);
   }
 
-  // 3. Simple Clean PDF Generator
+  // 3. Clean Valid PDF 1.4 Generator
   async generateSimplePdf(title: string, columns: string[], rows: (string | number)[][]): Promise<Buffer> {
-    // Generate text/pdf formatted structure
-    const lines: string[] = [];
-    lines.push(`================================================================================`);
-    lines.push(`                       SNACKFLOW ERP - ${title.toUpperCase()}                   `);
-    lines.push(`                       Generated: ${new Date().toISOString()}                  `);
-    lines.push(`================================================================================`);
-    lines.push(columns.map((c) => c.padEnd(20)).join(' | '));
-    lines.push(`--------------------------------------------------------------------------------`);
-    for (const row of rows) {
-      lines.push(row.map((cell) => String(cell).padEnd(20)).join(' | '));
+    const escapePdfText = (input: string) =>
+      input.replace(/[^\x20-\x7E]/g, ' ').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+
+    const textLines: string[] = [
+      `SNACKFLOW ERP - ${title.toUpperCase()}`,
+      `Generated: ${new Date().toISOString()}`,
+      columns.join(' | '),
+      '-'.repeat(80),
+      ...rows.slice(0, 45).map((r) => r.map((c) => String(c ?? '')).join(' | ')),
+    ];
+
+    const contentOps = [
+      'BT',
+      '/F1 9 Tf',
+      '40 760 Td',
+      '14 TL',
+      ...textLines.map((line, i) => `${i === 0 ? '' : 'T* '}(${escapePdfText(line)}) Tj`),
+      'ET',
+    ].join('\n');
+
+    const objects: string[] = [
+      '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
+      '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
+      '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj',
+      `4 0 obj << /Length ${Buffer.byteLength(contentOps, 'ascii')} >> stream\n${contentOps}\nendstream endobj`,
+      '5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Courier >> endobj',
+    ];
+
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [0];
+    for (const obj of objects) {
+      offsets.push(Buffer.byteLength(pdf, 'ascii'));
+      pdf += `${obj}\n`;
     }
-    lines.push(`================================================================================`);
-    return Buffer.from(lines.join('\n'), 'utf-8');
+    const xrefStart = Buffer.byteLength(pdf, 'ascii');
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (let i = 1; i <= objects.length; i++) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+    return Buffer.from(pdf, 'ascii');
   }
 }

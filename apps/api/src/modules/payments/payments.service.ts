@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   Inject,
 } from '@nestjs/common';
@@ -51,7 +52,24 @@ export class PaymentsService {
 
       if (dto.allocations && dto.allocations.length > 0) {
         let sumAlloc = toDecimal(0);
+        const invoiceIds = dto.allocations.map((a) => a.invoiceId);
+        const targetInvoices = await tx.invoice.findMany({
+          where: {
+            id: { in: invoiceIds },
+            companyId,
+            status: InvoiceStatus.POSTED,
+            order: { partyId: dto.partyId },
+          },
+          select: { id: true },
+        });
+        const validIds = new Set(targetInvoices.map((i) => i.id));
+
         for (const alloc of dto.allocations) {
+          if (!validIds.has(alloc.invoiceId)) {
+            throw new BadRequestException(
+              `Invoice '${alloc.invoiceId}' is not a valid POSTED invoice for this party`,
+            );
+          }
           sumAlloc = sumAlloc.plus(toDecimal(alloc.amount));
           allocationsToCreate.push({
             invoiceId: alloc.invoiceId,
@@ -64,6 +82,9 @@ export class PaymentsService {
           );
         }
       } else {
+        // Lock party row cleanly to serialize concurrent FIFO allocations for the same customer
+        await tx.$executeRaw`SELECT id FROM party WHERE id = ${dto.partyId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE`;
+
         // Automatic FIFO allocation against oldest unpaid posted invoices
         const postedInvoices = await tx.invoice.findMany({
           where: {
@@ -130,7 +151,9 @@ export class PaymentsService {
     });
   }
 
-  async listPayments(companyId: string, partyId?: string) {
+  async listPayments(companyId: string, partyId?: string, limit?: number, offset?: number) {
+    const take = Math.min(Math.max(1, Number(limit) || 200), 500);
+    const skip = Math.max(0, Number(offset) || 0);
     return this.prisma.payment.findMany({
       where: {
         companyId,
@@ -145,10 +168,23 @@ export class PaymentsService {
         },
       },
       orderBy: { paymentDate: 'desc' },
+      take,
+      skip,
     });
   }
 
-  async getPartyOutstanding(companyId: string, partyId: string) {
+  async getPartyOutstanding(companyId: string, partyId: string, salesmanId?: string) {
+    const party = await this.prisma.party.findFirst({
+      where: { id: partyId, companyId },
+      select: { id: true, assignedSalesmanId: true },
+    });
+    if (!party) {
+      throw new NotFoundException(`Party '${partyId}' not found`);
+    }
+    if (salesmanId && party.assignedSalesmanId !== salesmanId) {
+      throw new ForbiddenException('Access denied: party is not assigned to you');
+    }
+
     const invoices = await this.prisma.invoice.findMany({
       where: {
         companyId,

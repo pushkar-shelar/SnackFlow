@@ -7,6 +7,7 @@ import {
   Body,
   Inject,
   ParseIntPipe,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { BillingService } from './billing.service.js';
 import { CreditNoteService } from './credit-note.service.js';
@@ -14,6 +15,7 @@ import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-us
 import { RequirePermission, Public } from '../../core/decorators/require-permission.decorator.js';
 import {
   Permission,
+  Role,
   PostInvoiceSchema,
   PostInvoiceDto,
   CreateCreditNoteSchema,
@@ -38,16 +40,20 @@ export class BillingController {
     return this.billingService.postInvoice(user.companyId, dto, user.userId);
   }
 
-  @RequirePermission(Permission.ORDER_READ_ALL, Permission.REPORT_READ)
+  @RequirePermission(Permission.ORDER_READ_ALL, Permission.AUDIT_READ)
   @Get()
   async listInvoices(
     @CurrentUser() user: AuthenticatedUser,
-    @Query('partyId') partyId?: string,
+    @Query('partyId', new ParseUUIDPipe({ optional: true })) partyId?: string,
     @Query('status') status?: InvoiceStatus,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    const filters: { partyId?: string; status?: InvoiceStatus } = {};
+    const filters: { partyId?: string; status?: InvoiceStatus; limit?: number; offset?: number } = {};
     if (partyId) filters.partyId = partyId;
     if (status) filters.status = status;
+    if (limit !== undefined) filters.limit = Number(limit);
+    if (offset !== undefined) filters.offset = Number(offset);
     return this.billingService.listInvoices(user.companyId, filters);
   }
 
@@ -56,17 +62,18 @@ export class BillingController {
   @Get(':id/share')
   async getShareLink(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.billingService.generateShareLink(user.companyId, id);
+    const salesmanId = user.role === Role.SALESMAN ? user.userId : undefined;
+    return this.billingService.generateShareLink(user.companyId, id, salesmanId);
   }
 
   // T4.5: e-Invoice (INV-01 JSON) & e-Way bill JSON
-  @RequirePermission(Permission.ORDER_READ_ALL, Permission.REPORT_READ)
+  @RequirePermission(Permission.ORDER_READ_ALL, Permission.AUDIT_READ)
   @Get(':id/einvoice')
   async getEInvoice(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.billingService.getEInvoiceJson(user.companyId, id);
   }
@@ -75,39 +82,40 @@ export class BillingController {
   @Public()
   @Get('public/:id')
   async getPublicInvoice(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Query('expires', ParseIntPipe) expires: number,
     @Query('sig') sig: string,
   ) {
     return this.billingService.verifyAndGetPublicInvoice(id, expires, sig);
   }
 
+  @RequirePermission(Permission.ORDER_READ_ALL, Permission.AUDIT_READ)
+  @Get('credit-notes')
+  async listCreditNotes(@CurrentUser() user: AuthenticatedUser) {
+    return this.creditNoteService.listCreditNotes(user.companyId);
+  }
+
   @RequirePermission(
     Permission.ORDER_READ_OWN,
     Permission.ORDER_READ_ALL,
-    Permission.REPORT_READ,
+    Permission.AUDIT_READ,
   )
   @Get(':id')
   async getInvoice(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.billingService.getInvoice(user.companyId, id);
+    const salesmanId = user.role === Role.SALESMAN ? user.userId : undefined;
+    return this.billingService.getInvoice(user.companyId, id, salesmanId);
   }
 
   @RequirePermission(Permission.INVOICE_CANCEL)
   @Post(':id/credit-note')
   async createCreditNote(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(CreateCreditNoteSchema)) dto: CreateCreditNoteDto,
   ) {
     return this.creditNoteService.createCreditNote(user.companyId, id, dto, user.userId);
-  }
-
-  @RequirePermission(Permission.ORDER_READ_ALL, Permission.REPORT_READ)
-  @Get('credit-notes')
-  async listCreditNotes(@CurrentUser() user: AuthenticatedUser) {
-    return this.creditNoteService.listCreditNotes(user.companyId);
   }
 }

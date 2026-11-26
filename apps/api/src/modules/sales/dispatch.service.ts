@@ -23,32 +23,40 @@ export class DispatchService {
   ) {}
 
   async dispatchInvoice(companyId: string, invoiceId: string, createdBy?: string) {
-    const invoice = await this.prisma.invoice.findFirst({
-      where: { id: invoiceId, companyId },
-      include: {
-        lines: { include: { item: true } },
-        order: true,
-        dispatches: true,
-      },
-    });
-
-    if (!invoice) {
-      throw new NotFoundException(`Invoice '${invoiceId}' not found`);
-    }
-
-    if (invoice.status !== InvoiceStatus.POSTED) {
-      throw new BadRequestException(
-        `Cannot dispatch invoice in status '${invoice.status}'. Only POSTED invoices can be dispatched.`,
-      );
-    }
-
-    if (invoice.dispatches.length > 0) {
-      throw new BadRequestException(`Invoice '${invoice.number}' has already been dispatched.`);
-    }
-
     const fy = getFinancialYear();
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock the invoice row inside transaction to serialize concurrent dispatches of the same invoice
+      const lockedInv = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM invoice WHERE id = ${invoiceId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedInv.length === 0) {
+        throw new NotFoundException(`Invoice '${invoiceId}' not found`);
+      }
+
+      const invoice = await tx.invoice.findFirst({
+        where: { id: invoiceId, companyId },
+        include: {
+          lines: { include: { item: true } },
+          order: true,
+          dispatches: true,
+        },
+      });
+
+      if (!invoice) {
+        throw new NotFoundException(`Invoice '${invoiceId}' not found`);
+      }
+
+      if (invoice.status !== InvoiceStatus.POSTED) {
+        throw new BadRequestException(
+          `Cannot dispatch invoice in status '${invoice.status}'. Only POSTED invoices can be dispatched.`,
+        );
+      }
+
+      if (invoice.dispatches.length > 0) {
+        throw new BadRequestException(`Invoice '${invoice.number}' has already been dispatched.`);
+      }
+
       // 1. Sequence allocation for DSP
       const seq = await tx.$queryRaw<Array<{ next_no: number }>>`
         INSERT INTO document_sequence (id, company_id, doc_type, fy, next_no, updated_at)
@@ -180,7 +188,9 @@ export class DispatchService {
     });
   }
 
-  async listDispatches(companyId: string) {
+  async listDispatches(companyId: string, limit?: number, offset?: number) {
+    const take = Math.min(Math.max(1, Number(limit) || 200), 500);
+    const skip = Math.max(0, Number(offset) || 0);
     return this.prisma.dispatch.findMany({
       where: { companyId },
       include: {
@@ -201,6 +211,8 @@ export class DispatchService {
         },
       },
       orderBy: { dispatchedAt: 'desc' },
+      take,
+      skip,
     });
   }
 }

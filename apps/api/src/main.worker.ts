@@ -39,7 +39,11 @@ async function bootstrapWorker() {
       const { reportType, format, params } = job.data;
 
       if (reportType === 'sales-register') {
-        const data = await reportsService.getSalesRegister(params?.startDate, params?.endDate);
+        const data = await reportsService.getSalesRegister(
+          params?.startDate,
+          params?.endDate,
+          params?.companyId,
+        );
         if (format === 'csv') {
           return exportService.generateCsv(
             [
@@ -81,6 +85,16 @@ async function bootstrapWorker() {
   });
 
   console.log('✅ SnackFlow BullMQ Worker listening on queues: "reports-export", "nightly-audit"');
+
+  const shutdown = async () => {
+    await exportWorker.close();
+    await _auditWorker.close();
+    await redisConnection.quit();
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => { void shutdown(); });
+  process.on('SIGTERM', () => { void shutdown(); });
 }
 
 bootstrapWorker().catch((err) => {

@@ -18,14 +18,16 @@ RUN pnpm --filter @snackflow/api build
 FROM base AS runner
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/packages/shared/package.json ./packages/shared/
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=builder /app/apps/api/package.json ./apps/api/
-COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
+COPY --chown=node:node --from=builder /app/node_modules ./node_modules
+COPY --chown=node:node --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --chown=node:node --from=builder /app/packages/shared/package.json ./packages/shared/
+COPY --chown=node:node --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --chown=node:node --from=builder /app/apps/api/node_modules ./apps/api/node_modules
+COPY --chown=node:node --from=builder /app/apps/api/package.json ./apps/api/
+COPY --chown=node:node --from=builder /app/apps/api/prisma ./apps/api/prisma
 
+USER node
 WORKDIR /app/apps/api
 EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||process.env.PORT||4000)+'/api/v1/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "dist/src/main.js"]

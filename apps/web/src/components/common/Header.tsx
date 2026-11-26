@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -33,6 +33,8 @@ export function Header() {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [isSwitching, setIsSwitching] = useState<boolean>(false);
   const [currentLang, setCurrentLang] = useState<'ta' | 'en'>('ta');
+  const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Monitor Dexie queued orders count
   const queuedCount = useLiveQuery(
@@ -66,11 +68,28 @@ export function Header() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     setIsOnline(navigator.onLine);
+    if (typeof window !== 'undefined') {
+      const savedLang = localStorage.getItem('snackflow_lang');
+      if (savedLang === 'en' || savedLang === 'ta') setCurrentLang(savedLang);
+    }
+
+    const handleDocClick = (ev: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const handleEsc = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleDocClick);
+    document.addEventListener('keydown', handleEsc);
 
     return () => {
       window.removeEventListener('storage', syncSession);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('mousedown', handleDocClick);
+      document.removeEventListener('keydown', handleEsc);
     };
   }, [pathname, router]);
 
@@ -153,23 +172,23 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo & Company */}
-          <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="w-10 h-10 rounded-xl bg-amber-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-amber-600/20 group-hover:scale-105 transition-transform">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group min-w-0">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-amber-600 flex items-center justify-center text-white font-bold text-lg sm:text-xl shadow-md shadow-amber-600/20 group-hover:scale-105 transition-transform shrink-0">
                 மு
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-stone-900 tracking-tight text-lg">SnackFlow</span>
-                  <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded uppercase tracking-wider">NIT-T CDI</span>
+                  <span className="font-bold text-stone-900 tracking-tight text-base sm:text-lg truncate">SnackFlow</span>
+                  <span className="hidden sm:inline text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded uppercase tracking-wider">NIT-T CDI</span>
                 </div>
-                <p className="text-xs text-stone-500 font-medium">Sri Murugan Snacks • மதுரை</p>
+                <p className="hidden sm:block text-xs text-stone-500 font-medium">Sri Murugan Snacks • மதுரை</p>
               </div>
             </Link>
           </div>
 
           {/* Persona Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-1 bg-stone-100/80 p-1 rounded-xl border border-stone-200/60">
+          <nav className="hidden lg:flex items-center gap-1 bg-stone-100/80 p-1 rounded-xl border border-stone-200/60" aria-label="Primary Navigation">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname.startsWith(item.path);
@@ -198,7 +217,7 @@ export function Header() {
           </nav>
 
           {/* Right Status & Persona Badge */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Language Toggle (T4.10) */}
             <button
               onClick={() => {
@@ -208,14 +227,14 @@ export function Header() {
                   localStorage.setItem('snackflow_lang', newLang);
                 }
               }}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100 transition-colors shadow-2xs"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full text-[11px] sm:text-xs font-bold border bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100 transition-colors shadow-2xs"
               title="Toggle Tamil / English (மொழி மாற்றம்)"
             >
-              <span>{currentLang === 'ta' ? 'தமிழ்' : 'English'}</span>
+              <span>{currentLang === 'ta' ? 'தமிழ்' : 'EN'}</span>
             </button>
 
             {/* Online / Outbox Pill */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-stone-50 border-stone-200">
+            <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-full text-xs font-medium border bg-stone-50 border-stone-200">
               {isOnline ? (
                 <>
                   <Wifi className="w-3.5 h-3.5 text-emerald-600" />
@@ -234,57 +253,95 @@ export function Header() {
               )}
             </div>
 
-            {/* Active User Pill with Dropdown */}
+            {/* Active User Pill with Accessible Click/Escape Dropdown */}
             {session ? (
-              <div className="relative group">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200/70 border border-stone-200/80 text-xs font-medium text-stone-800 cursor-pointer transition">
-                  <UserCheck className="w-3.5 h-3.5 text-amber-600" />
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-label="Account and navigation menu"
+                  onClick={() => setMenuOpen((prev) => !prev)}
+                  className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200/70 border border-stone-200/80 text-xs font-medium text-stone-800 cursor-pointer transition"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-amber-600 hidden sm:inline" />
                   <span className="hidden sm:inline font-semibold">{session.name}</span>
                   <span className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
                     {session.role}
                   </span>
                   <ChevronDown className="w-3 h-3 text-stone-400" />
-                </div>
+                </button>
 
-                {/* Dropdown for role switching & logout */}
-                <div className="absolute right-0 mt-1 w-64 bg-white border border-stone-200 rounded-xl shadow-lg p-1.5 hidden group-hover:block z-50">
-                  <div className="px-2 py-1.5 border-b border-stone-100 mb-1">
-                    <p className="text-[11px] font-bold text-stone-900">{session.name}</p>
-                    <p className="text-[10px] text-stone-500">{session.email}</p>
-                  </div>
-
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-1">
-                    Switch User Account
-                  </p>
-                  {SEEDED_ACCOUNTS.map((acc) => (
-                    <button
-                      key={acc.email}
-                      disabled={isSwitching}
-                      onClick={() => {
-                        const target = navItems.find((n) => n.role === acc.role)?.path || '/';
-                        handleRoleChange(acc.email, target);
-                      }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between hover:bg-amber-50 transition-colors ${
-                        session.email === acc.email ? 'bg-amber-50/80 font-bold text-amber-900' : 'text-stone-700'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-medium">{acc.name}</div>
-                        <div className="text-[10px] text-stone-400">{acc.email}</div>
-                      </div>
-                      <span className="text-[10px] font-semibold text-stone-500">{acc.role}</span>
-                    </button>
-                  ))}
-
-                  <div className="my-1 border-t border-stone-100" />
-                  <button
-                    onClick={handleLogout}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 text-rose-600 hover:bg-rose-50 font-semibold transition-colors"
+                {/* Dropdown for mobile nav, role switching & logout */}
+                {menuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 mt-1 w-64 bg-white border border-stone-200 rounded-xl shadow-lg p-1.5 z-50"
                   >
-                    <LogOut className="w-3.5 h-3.5" />
-                    Sign Out / Log Out
-                  </button>
-                </div>
+                    <div className="px-2 py-1.5 border-b border-stone-100 mb-1">
+                      <p className="text-[11px] font-bold text-stone-900">{session.name}</p>
+                      <p className="text-[10px] text-stone-500">{session.email}</p>
+                    </div>
+
+                    <div className="lg:hidden border-b border-stone-100 pb-1 mb-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-1">
+                        Navigation
+                      </p>
+                      {navItems
+                        .filter((item) => item.allowedRoles.includes(session.role))
+                        .map((item) => {
+                          const Icon = item.icon;
+                          return (
+                            <Link
+                              key={item.path}
+                              href={item.path}
+                              onClick={() => setMenuOpen(false)}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 text-stone-700 hover:bg-amber-50 font-medium"
+                            >
+                              <Icon className="w-3.5 h-3.5 text-amber-600" />
+                              <span>{item.label}</span>
+                            </Link>
+                          );
+                        })}
+                    </div>
+
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-1">
+                      Switch User Account
+                    </p>
+                    {SEEDED_ACCOUNTS.map((acc) => (
+                      <button
+                        key={acc.email}
+                        disabled={isSwitching}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          const target = navItems.find((n) => n.role === acc.role)?.path || '/';
+                          handleRoleChange(acc.email, target);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between hover:bg-amber-50 transition-colors ${
+                          session.email === acc.email ? 'bg-amber-50/80 font-bold text-amber-900' : 'text-stone-700'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-medium">{acc.name}</div>
+                          <div className="text-[10px] text-stone-400">{acc.email}</div>
+                        </div>
+                        <span className="text-[10px] font-semibold text-stone-500">{acc.role}</span>
+                      </button>
+                    ))}
+
+                    <div className="my-1 border-t border-stone-100" />
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        handleLogout();
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 text-rose-600 hover:bg-rose-50 font-semibold transition-colors"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      Sign Out / Log Out
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <Link

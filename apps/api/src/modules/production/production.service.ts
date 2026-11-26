@@ -10,6 +10,8 @@ import {
   calculateYieldVariance,
   calculateRemainderSplit,
   canTransitionRun,
+  getFinancialYear,
+  formatInvoiceNumber,
   Decimal,
   roundMoney,
   roundUnitCost,
@@ -30,67 +32,78 @@ export class ProductionService {
    * Step 1: Create a Draft Production Run pre-filling standard recipe and pack-spec consumption
    */
   async createDraftRun(companyId: string, recipeId: string, fgItemId: string, batchFactor: number = 1.0) {
-    const recipe = await this.prisma.recipe.findUnique({
-      where: { id: recipeId },
-      include: { recipeLines: { include: { item: true } } },
-    });
-    if (!recipe || recipe.companyId !== companyId) {
-      throw new NotFoundException('Recipe not found');
-    }
+    const fy = getFinancialYear();
 
-    const fgItem = await this.prisma.item.findUnique({
-      where: { id: fgItemId },
-    });
-    if (!fgItem || fgItem.companyId !== companyId) {
-      throw new NotFoundException('Finished goods item not found');
-    }
+    return this.prisma.$transaction(async (tx) => {
+      const recipe = await tx.recipe.findUnique({
+        where: { id: recipeId },
+        include: { recipeLines: { include: { item: true } } },
+      });
+      if (!recipe || recipe.companyId !== companyId) {
+        throw new NotFoundException('Recipe not found');
+      }
 
-    const bf = toDecimal(batchFactor);
-    const expectedBatchKg = toDecimal(recipe.batchOutputKg).times(bf);
-    const netWeightKg = fgItem.netWeightG ? toDecimal(fgItem.netWeightG).dividedBy(1000) : new Decimal(0.2);
-    const expectedOutputQty = expectedBatchKg.dividedBy(netWeightKg).round();
+      const fgItem = await tx.item.findUnique({
+        where: { id: fgItemId },
+      });
+      if (!fgItem || fgItem.companyId !== companyId) {
+        throw new NotFoundException('Finished goods item not found');
+      }
 
-    const runNumber = `RUN-${Date.now().toString().slice(-6)}`;
+      const bf = toDecimal(batchFactor);
+      const expectedBatchKg = toDecimal(recipe.batchOutputKg).times(bf);
+      const netWeightKg = fgItem.netWeightG ? toDecimal(fgItem.netWeightG).dividedBy(1000) : new Decimal(0.2);
+      const expectedOutputQty = expectedBatchKg.dividedBy(netWeightKg).round();
 
-    return this.prisma.productionRun.create({
-      data: {
-        companyId,
-        number: runNumber,
-        recipeId,
-        fgItemId,
-        status: RunStatus.DRAFT,
-        batchFactor: bf.toNumber(),
-        runDate: new Date(),
-        inputs: {
-          create: recipe.recipeLines.map((line) => {
-            const stdQty = toDecimal(line.qtyPerBatch).times(bf);
-            return {
-              itemId: line.itemId,
-              stdQty: stdQty.toNumber(),
-              actualQty: stdQty.toNumber(), // Pre-filled with standard
-              uom: line.uom,
-              unitCost: 0,
-              value: 0,
-              variancePct: 0,
-              flagged: false,
-            };
-          }),
+      const seq = await tx.$queryRaw<Array<{ next_no: number }>>`
+        INSERT INTO document_sequence (id, company_id, doc_type, fy, next_no, updated_at)
+        VALUES (gen_random_uuid(), ${companyId}::uuid, 'RUN', ${fy}, 2, NOW())
+        ON CONFLICT (company_id, doc_type, fy)
+        DO UPDATE SET next_no = document_sequence.next_no + 1, updated_at = NOW()
+        RETURNING next_no - 1 AS next_no
+      `;
+      const runNumber = formatInvoiceNumber(seq[0]?.next_no ?? 1, fy, 'RUN');
+
+      return tx.productionRun.create({
+        data: {
+          companyId,
+          number: runNumber,
+          recipeId,
+          fgItemId,
+          status: RunStatus.DRAFT,
+          batchFactor: bf.toNumber(),
+          runDate: new Date(),
+          inputs: {
+            create: recipe.recipeLines.map((line) => {
+              const stdQty = toDecimal(line.qtyPerBatch).times(bf);
+              return {
+                itemId: line.itemId,
+                stdQty: stdQty.toNumber(),
+                actualQty: stdQty.toNumber(), // Pre-filled with standard
+                uom: line.uom,
+                unitCost: 0,
+                value: 0,
+                variancePct: 0,
+                flagged: false,
+              };
+            }),
+          },
+          outputs: {
+            create: [
+              {
+                fgItemId,
+                expectedQty: expectedOutputQty.toNumber(),
+                goodQty: expectedOutputQty.toNumber(),
+              },
+            ],
+          },
         },
-        outputs: {
-          create: [
-            {
-              fgItemId,
-              expectedQty: expectedOutputQty.toNumber(),
-              goodQty: expectedOutputQty.toNumber(),
-            },
-          ],
+        include: {
+          recipe: true,
+          inputs: { include: { item: true } },
+          outputs: { include: { fgItem: true } },
         },
-      },
-      include: {
-        recipe: true,
-        inputs: { include: { item: true } },
-        outputs: { include: { fgItem: true } },
-      },
+      });
     });
   }
 
@@ -109,6 +122,14 @@ export class ProductionService {
     createdBy?: string,
   ) {
     return this.prisma.$transaction(async (tx) => {
+      // Lock the production run row to serialize concurrent post attempts
+      const lockedRun = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM production_run WHERE id = ${runId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedRun.length === 0) {
+        throw new NotFoundException('Production run not found');
+      }
+
       const run = await tx.productionRun.findUnique({
         where: { id: runId },
         include: {
@@ -130,12 +151,15 @@ export class ProductionService {
       let qc = await tx.qcCheckpoint.findUnique({ where: { runId: run.id } });
       if (!qc) {
         // Auto-create standard approved QC record for automated benchmark suites if not pre-populated
-        const inspector = await tx.user.findFirst({ where: { companyId } });
+        const inspector = createdBy ? { id: createdBy } : await tx.user.findFirst({ where: { companyId } });
+        if (!inspector) {
+          throw new BadRequestException('No inspector user available for QC signoff');
+        }
         qc = await tx.qcCheckpoint.create({
           data: {
             companyId,
             runId: run.id,
-            inspectorId: inspector?.id || '00000000-0000-0000-0000-000000000001',
+            inspectorId: inspector.id,
             moisturePct: 2.1,
             tasteCrunchTest: true,
             sealIntegrity: true,
@@ -274,17 +298,23 @@ export class ProductionService {
         });
       }
 
-      // 4. Create Finished Goods Batch (MUR200-YYMMDD-NN)
+      // 4. Create Finished Goods Batch (<SKU_PREFIX>-YYMMDD-NN)
+      const skuParts = (fgItem?.sku || 'FG').replace(/^FG-/i, '').split('-');
+      const skuPrefix =
+        ((skuParts[0] || 'FG') + (skuParts[1] ? skuParts[1].replace(/\D/g, '') : ''))
+          .replace(/[^A-Za-z0-9]/g, '')
+          .toUpperCase() || 'FG';
       const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`batch:${companyId}:${skuPrefix}:${dateStr}`}))`;
       const countToday = await tx.stockBatch.count({
         where: {
           companyId,
           itemId: run.fgItemId,
-          batchNo: { startsWith: `MUR200-${dateStr}-` },
+          batchNo: { startsWith: `${skuPrefix}-${dateStr}-` },
         },
       });
       const seqStr = String(countToday + 1).padStart(2, '0');
-      const batchNo = `MUR200-${dateStr}-${seqStr}`;
+      const batchNo = `${skuPrefix}-${dateStr}-${seqStr}`;
       const mfgDate = new Date();
       const expiryDate = new Date(mfgDate.getTime() + (fgItem?.shelfLifeDays || 90) * 24 * 60 * 60 * 1000);
 
@@ -348,6 +378,13 @@ export class ProductionService {
    */
   async closeRun(companyId: string, runId: string, overheadAmount: number, createdBy?: string) {
     return this.prisma.$transaction(async (tx) => {
+      const lockedRun = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM production_run WHERE id = ${runId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedRun.length === 0) {
+        throw new NotFoundException('Production run not found');
+      }
+
       const run = await tx.productionRun.findUnique({
         where: { id: runId },
         include: { outputs: true },
@@ -448,6 +485,13 @@ export class ProductionService {
    */
   async reverseRun(companyId: string, runId: string, createdBy?: string) {
     return this.prisma.$transaction(async (tx) => {
+      const lockedRun = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM production_run WHERE id = ${runId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedRun.length === 0) {
+        throw new NotFoundException('Production run not found');
+      }
+
       const run = await tx.productionRun.findUnique({
         where: { id: runId },
         include: { outputs: true },

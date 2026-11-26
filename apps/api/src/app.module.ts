@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_FILTER, APP_PIPE, APP_INTERCEPTOR } from '@nestjs/core';
+import { envSchema } from './config/env.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { InventoryModule } from './modules/inventory/inventory.module.js';
@@ -15,6 +16,7 @@ import { ReportsModule } from './modules/reports/reports.module.js';
 import { AlertsModule } from './modules/alerts/alerts.module.js';
 import { AuthGuard } from './core/guards/auth.guard.js';
 import { RbacGuard } from './core/guards/rbac.guard.js';
+import { RateLimitGuard } from './core/guards/rate-limit.guard.js';
 import { Rfc7807ExceptionFilter } from './core/filters/rfc7807-exception.filter.js';
 import { ZodValidationPipe } from './core/pipes/zod-validation.pipe.js';
 import { IdempotencyInterceptor } from './core/interceptors/idempotency.interceptor.js';
@@ -26,6 +28,7 @@ import { HealthController } from './core/controllers/health.controller.js';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env', '../../.env'],
+      validate: (config) => envSchema.parse(config),
     }),
     PrismaModule,
     AuthModule,
@@ -42,6 +45,10 @@ import { HealthController } from './core/controllers/health.controller.js';
   ],
   controllers: [HealthController],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: AuthGuard,

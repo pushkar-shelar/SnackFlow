@@ -6,7 +6,12 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  PNPM_FLAGS = "--no-frozen-lockfile"
+
+# Static public invoice dynamic path rewrite
+[[redirects]]
+  from = "/public/invoices/*"
+  to = "/public/invoices/sample.html"
+  status = 200
 
 # SPA Fallback for client-side navigation
 [[redirects]]

@@ -28,9 +28,17 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO app_readonly
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
 
--- Defence in Depth: explicitly revoke UPDATE/DELETE on immutable audit and stock ledger tables
-REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.stock_ledger FROM app_runtime;
-REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.audit_log FROM app_runtime;
+-- Defence in Depth: explicitly revoke UPDATE/DELETE on immutable audit and stock ledger tables when present
+DO $$
+BEGIN
+  IF to_regclass('public.stock_ledger') IS NOT NULL THEN
+    REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.stock_ledger FROM app_runtime;
+  END IF;
+  IF to_regclass('public.audit_log') IS NOT NULL THEN
+    REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.audit_log FROM app_runtime;
+  END IF;
+END
+$$;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;

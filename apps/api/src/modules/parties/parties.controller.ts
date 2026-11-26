@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Query, Body, Inject } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, Body, Inject, ParseUUIDPipe } from '@nestjs/common';
 import { PartiesService } from './parties.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
@@ -27,7 +27,12 @@ export class PartiesController {
     return this.partiesService.createParty(user.companyId, dto);
   }
 
-  @RequirePermission(Permission.ORDER_READ_OWN)
+  @RequirePermission(
+    Permission.ORDER_READ_OWN,
+    Permission.ORDER_READ_ALL,
+    Permission.MASTER_MANAGE,
+    Permission.REPORT_READ,
+  )
   @Get()
   async list(
     @CurrentUser() user: AuthenticatedUser,
@@ -57,23 +62,39 @@ export class PartiesController {
     return this.partiesService.listApplications(user.companyId, salesmanId);
   }
 
-  // Admin approves application: POST /api/v1/parties/applications/:id/approve
+  // Admin verifies and approves application: POST /api/v1/parties/applications/:id/approve
   @RequirePermission(Permission.MASTER_MANAGE)
   @Post('applications/:id/approve')
   async approve(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(ApproveRetailerApplicationSchema)) dto: ApproveRetailerApplicationDto,
   ) {
     return this.partiesService.approveApplication(user.companyId, id, dto);
   }
 
-  @RequirePermission(Permission.ORDER_READ_OWN)
+  // Admin rejects application: POST /api/v1/parties/applications/:id/reject
+  @RequirePermission(Permission.MASTER_MANAGE)
+  @Post('applications/:id/reject')
+  async reject(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.partiesService.rejectApplication(user.companyId, id);
+  }
+
+  @RequirePermission(
+    Permission.ORDER_READ_OWN,
+    Permission.ORDER_READ_ALL,
+    Permission.MASTER_MANAGE,
+    Permission.REPORT_READ,
+  )
   @Get(':id')
   async get(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.partiesService.getParty(user.companyId, id);
+    const salesmanId = user.role === Role.SALESMAN ? user.userId : undefined;
+    return this.partiesService.getParty(user.companyId, id, salesmanId);
   }
 }

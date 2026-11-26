@@ -6,12 +6,14 @@ import {
   Query,
   Body,
   Inject,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
 import {
   Permission,
+  Role,
   CreatePaymentSchema,
   CreatePaymentDto,
 } from '@snackflow/shared';
@@ -30,25 +32,33 @@ export class PaymentsController {
     return this.paymentsService.createPayment(user.companyId, dto);
   }
 
-  @RequirePermission(Permission.ORDER_READ_ALL, Permission.REPORT_READ)
+  @RequirePermission(Permission.ORDER_READ_ALL, Permission.AUDIT_READ)
   @Get('payments')
   async listPayments(
     @CurrentUser() user: AuthenticatedUser,
-    @Query('partyId') partyId?: string,
+    @Query('partyId', new ParseUUIDPipe({ optional: true })) partyId?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    return this.paymentsService.listPayments(user.companyId, partyId);
+    return this.paymentsService.listPayments(
+      user.companyId,
+      partyId,
+      limit !== undefined ? Number(limit) : undefined,
+      offset !== undefined ? Number(offset) : undefined,
+    );
   }
 
   @RequirePermission(
     Permission.ORDER_READ_OWN,
     Permission.ORDER_READ_ALL,
-    Permission.REPORT_READ,
+    Permission.AUDIT_READ,
   )
   @Get('parties/:partyId/outstanding')
   async getPartyOutstanding(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('partyId') partyId: string,
+    @Param('partyId', ParseUUIDPipe) partyId: string,
   ) {
-    return this.paymentsService.getPartyOutstanding(user.companyId, partyId);
+    const salesmanId = user.role === Role.SALESMAN ? user.userId : undefined;
+    return this.paymentsService.getPartyOutstanding(user.companyId, partyId, salesmanId);
   }
 }

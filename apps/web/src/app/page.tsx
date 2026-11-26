@@ -77,7 +77,7 @@ export default function HomePage() {
     },
     {
       title: 'Owner Margin Control',
-      description: 'Executive dashboard tracking gross margins (37.7%), plant yield variances (-6.0%), collections, and debtor ageing.',
+      description: 'Executive dashboard tracking live invoiced revenue, gross margins, plant yield variances, collections, and debtor ageing.',
       path: '/owner',
       icon: PieChart,
       color: 'bg-rose-600',

@@ -14,7 +14,9 @@ import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class AuthService {
-  private failedAttempts: Map<string, { count: number; lockedUntil?: number }> = new Map();
+  private static readonly MAX_TRACKED_ATTEMPTS = 5000;
+  private static readonly LOCKOUT_TTL_MS = 15 * 60 * 1000;
+  private failedAttempts: Map<string, { count: number; lastAttemptAt: number; lockedUntil?: number }> = new Map();
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -22,11 +24,20 @@ export class AuthService {
     @Inject(ConfigService) private readonly configService: ConfigService,
   ) {}
 
+  private canonicalAttemptKey(email: string): string {
+    const normalized = email.trim().toLowerCase();
+    return normalized.endsWith('@snackflow.com')
+      ? normalized.replace(/@snackflow\.com$/, '@snackflow.local')
+      : normalized;
+  }
+
   async login(loginDto: LoginDto, _ip: string = '127.0.0.1') {
     const rawEmail = loginDto.email.trim().toLowerCase();
+    const attemptKey = this.canonicalAttemptKey(rawEmail);
+    this.pruneExpiredAttempts();
 
-    // Check rate limit / lockout: max 10 failed attempts -> 15 min lockout
-    const attempt = this.failedAttempts.get(rawEmail);
+    // Check rate limit / lockout across domain aliases: max 10 failed attempts -> 15 min lockout
+    const attempt = this.failedAttempts.get(attemptKey);
     if (attempt && attempt.lockedUntil && attempt.lockedUntil > Date.now()) {
       const waitMinutes = Math.ceil((attempt.lockedUntil - Date.now()) / 60000);
       throw new ForbiddenException(`Account temporarily locked. Please try again in ${waitMinutes} minutes.`);
@@ -46,23 +57,18 @@ export class AuthService {
     }
 
     if (!user || !user.isActive) {
-      this.recordFailedAttempt(rawEmail);
+      this.recordFailedAttempt(attemptKey);
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    let isValidPassword = await verify(user.passwordHash, loginDto.password);
-    if (!isValidPassword && (loginDto.password === 'Password@123' || loginDto.password === 'Password123!')) {
-      const altPassword = loginDto.password === 'Password@123' ? 'Password123!' : 'Password@123';
-      isValidPassword = await verify(user.passwordHash, altPassword);
-    }
-
+    const isValidPassword = await verify(user.passwordHash, loginDto.password);
     if (!isValidPassword) {
-      this.recordFailedAttempt(rawEmail);
+      this.recordFailedAttempt(attemptKey);
       throw new UnauthorizedException('Invalid email or password');
     }
 
     // Reset failed attempts on success
-    this.failedAttempts.delete(rawEmail);
+    this.failedAttempts.delete(attemptKey);
 
     // Generate token family
     const familyId = uuidv4();
@@ -87,49 +93,68 @@ export class AuthService {
     }
 
     const tokenHash = this.hashToken(rawRefreshToken);
-    const storedToken = await this.prisma.refreshToken.findFirst({
-      where: { tokenHash },
-      include: { user: true },
-    });
 
-    if (!storedToken) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
+    return this.prisma.$transaction(async (tx) => {
+      // Lock matching refresh token row to serialize concurrent refresh rotations
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM refresh_token WHERE token_hash = ${tokenHash} FOR UPDATE
+      `;
+      if (locked.length === 0) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
 
-    // Reuse detection: If token was already revoked, revoke the ENTIRE family!
-    if (storedToken.revokedAt) {
-      await this.prisma.refreshToken.updateMany({
-        where: { familyId: storedToken.familyId },
-        data: { revokedAt: new Date() },
+      const storedToken = await tx.refreshToken.findFirst({
+        where: { id: locked[0]!.id },
+        include: { user: true },
       });
-      throw new UnauthorizedException('Security violation: Refresh token reuse detected. Session revoked.');
-    }
 
-    if (new Date() > storedToken.expiresAt) {
-      throw new UnauthorizedException('Refresh token expired');
-    }
+      if (!storedToken) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
 
-    // Rotate: Revoke current token and issue new pair under same family
-    const newTokens = await this.generateTokens(
-      storedToken.user.id,
-      storedToken.user.companyId,
-      storedToken.user.email,
-      storedToken.user.role as unknown as Role,
-      storedToken.familyId,
-    );
+      if (!storedToken.user.isActive) {
+        await tx.refreshToken.updateMany({
+          where: { userId: storedToken.userId },
+          data: { revokedAt: new Date() },
+        });
+        throw new ForbiddenException('Account is deactivated');
+      }
 
-    await this.prisma.refreshToken.update({
-      where: { id: storedToken.id },
-      data: {
-        revokedAt: new Date(),
-        replacedBy: newTokens.refreshTokenId,
-      },
+      // Reuse detection: If token was already revoked, revoke the ENTIRE family!
+      if (storedToken.revokedAt) {
+        await tx.refreshToken.updateMany({
+          where: { familyId: storedToken.familyId },
+          data: { revokedAt: new Date() },
+        });
+        throw new UnauthorizedException('Security violation: Refresh token reuse detected. Session revoked.');
+      }
+
+      if (new Date() > storedToken.expiresAt) {
+        throw new UnauthorizedException('Refresh token expired');
+      }
+
+      const newTokens = await this.generateTokens(
+        storedToken.user.id,
+        storedToken.user.companyId,
+        storedToken.user.email,
+        storedToken.user.role as unknown as Role,
+        storedToken.familyId,
+        tx,
+      );
+
+      await tx.refreshToken.update({
+        where: { id: storedToken.id },
+        data: {
+          revokedAt: new Date(),
+          replacedBy: newTokens.refreshTokenId,
+        },
+      });
+
+      return {
+        accessToken: newTokens.accessToken,
+        refreshToken: newTokens.refreshToken,
+      };
     });
-
-    return {
-      accessToken: newTokens.accessToken,
-      refreshToken: newTokens.refreshToken,
-    };
   }
 
   async logout(rawRefreshToken: string) {
@@ -147,20 +172,25 @@ export class AuthService {
     email: string,
     role: Role,
     familyId: string,
+    db: { refreshToken: PrismaService['refreshToken'] } = this.prisma,
   ) {
     const payload = { userId, companyId, email, role };
-    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET') || 'default-secret';
+    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
+    if (!accessSecret) {
+      throw new Error('JWT_ACCESS_SECRET is not configured');
+    }
 
     const accessToken = await this.jwtService.signAsync(payload, {
       secret: accessSecret,
       expiresIn: '15m',
+      algorithm: 'HS256',
     });
 
     const rawRefreshToken = uuidv4() + '.' + crypto.randomBytes(32).toString('hex');
     const tokenHash = this.hashToken(rawRefreshToken);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-    const createdToken = await this.prisma.refreshToken.create({
+    const createdToken = await db.refreshToken.create({
       data: {
         userId,
         familyId,
@@ -180,11 +210,31 @@ export class AuthService {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
+  private pruneExpiredAttempts() {
+    const now = Date.now();
+    for (const [key, entry] of this.failedAttempts.entries()) {
+      const isExpiredLock = entry.lockedUntil ? entry.lockedUntil <= now : false;
+      const isStale = now - entry.lastAttemptAt > AuthService.LOCKOUT_TTL_MS;
+      if (isExpiredLock || isStale) {
+        this.failedAttempts.delete(key);
+      }
+    }
+  }
+
   private recordFailedAttempt(email: string) {
-    const current = this.failedAttempts.get(email) || { count: 0 };
+    if (this.failedAttempts.size >= AuthService.MAX_TRACKED_ATTEMPTS) {
+      this.pruneExpiredAttempts();
+      if (this.failedAttempts.size >= AuthService.MAX_TRACKED_ATTEMPTS) {
+        const oldestKey = this.failedAttempts.keys().next().value;
+        if (oldestKey) this.failedAttempts.delete(oldestKey);
+      }
+    }
+    const now = Date.now();
+    const current = this.failedAttempts.get(email) || { count: 0, lastAttemptAt: now };
     current.count += 1;
+    current.lastAttemptAt = now;
     if (current.count >= 10) {
-      current.lockedUntil = Date.now() + 15 * 60 * 1000; // 15 mins
+      current.lockedUntil = now + AuthService.LOCKOUT_TTL_MS;
     }
     this.failedAttempts.set(email, current);
   }

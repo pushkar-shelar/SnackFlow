@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Inject } from '@nestjs/common';
+import { Controller, Post, Get, Body, Query, Inject } from '@nestjs/common';
 import { PurchasingService } from './purchasing.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
@@ -20,7 +20,15 @@ export class PurchasingController {
 
   @RequirePermission(Permission.REPORT_READ)
   @Get()
-  async list(@CurrentUser() user: AuthenticatedUser) {
-    return this.purchasingService.listPurchases(user.companyId);
+  async list(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.purchasingService.listPurchases(
+      user.companyId,
+      limit !== undefined ? Number(limit) : undefined,
+      offset !== undefined ? Number(offset) : undefined,
+    );
   }
 }

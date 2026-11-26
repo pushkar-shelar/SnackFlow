@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   Inject,
 } from '@nestjs/common';
@@ -13,13 +14,19 @@ import {
   getFinancialYear,
   formatInvoiceNumber,
   OrderStatus,
+  Role,
 } from '@snackflow/shared';
 
 @Injectable()
 export class OrdersService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async createOrder(companyId: string, salesmanId: string, dto: CreateOrderDto) {
+  async createOrder(
+    companyId: string,
+    callerUserId: string,
+    callerRole: Role,
+    dto: CreateOrderDto,
+  ) {
     // 1. Idempotency Check: if clientUuid exists, return the existing order
     const existing = await this.prisma.salesOrder.findUnique({
       where: { clientUuid: dto.clientUuid },
@@ -30,10 +37,26 @@ export class OrdersService {
     });
 
     if (existing) {
+      if (existing.companyId !== companyId) {
+        throw new ForbiddenException('Access denied for duplicate clientUuid');
+      }
       return existing;
     }
 
-    // 2. Load Company and Party
+    // Enforce salesman ownership: SALESMAN cannot attribute orders to another user
+    const resolvedSalesmanId =
+      callerRole === Role.SALESMAN ? callerUserId : dto.salesmanId || callerUserId;
+
+    if (resolvedSalesmanId !== callerUserId) {
+      const assignedUser = await this.prisma.user.findFirst({
+        where: { id: resolvedSalesmanId, companyId, isActive: true },
+      });
+      if (!assignedUser) {
+        throw new BadRequestException(`Invalid salesmanId '${resolvedSalesmanId}'`);
+      }
+    }
+
+    // 2. Load Company and Party (including priceList rates)
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
     });
@@ -43,17 +66,32 @@ export class OrdersService {
 
     const party = await this.prisma.party.findFirst({
       where: { id: dto.partyId, companyId },
+      include: {
+        priceList: { include: { items: true } },
+      },
     });
     if (!party) {
       throw new NotFoundException(`Party '${dto.partyId}' not found`);
     }
 
+    const defaultPriceList = await this.prisma.priceList.findFirst({
+      where: { companyId, isDefault: true },
+      include: { items: true },
+    });
+    const partyRateMap = new Map(
+      (party.priceList?.items ?? []).map((p) => [p.itemId, toDecimal(p.rate)]),
+    );
+    const defaultRateMap = new Map(
+      (defaultPriceList?.items ?? []).map((p) => [p.itemId, toDecimal(p.rate)]),
+    );
+
     const isInterState = party.stateCode !== company.stateCode;
 
-    // 3. Pre-fetch items and compute line taxes
+    // 3. Pre-fetch items + UoMs and compute line taxes using authoritative server rates
     const itemIds = dto.lines.map((l) => l.itemId);
     const items = await this.prisma.item.findMany({
       where: { id: { in: itemIds }, companyId },
+      include: { itemUoms: true },
     });
     const itemMap = new Map(items.map((i) => [i.id, i]));
 
@@ -67,8 +105,30 @@ export class OrdersService {
         throw new BadRequestException(`Item '${line.itemId}' not found in company catalog`);
       }
 
+      let uomFactor = toDecimal(1);
+      if (line.uom !== item.baseUom) {
+        const matchedUom = item.itemUoms.find((u) => u.uom === line.uom);
+        if (!matchedUom) {
+          throw new BadRequestException(`Invalid UoM '${line.uom}' for item '${item.sku}'`);
+        }
+        uomFactor = toDecimal(matchedUom.factorToBase);
+      }
+
+      const baseRate = partyRateMap.get(line.itemId) ?? defaultRateMap.get(line.itemId);
+      if (!baseRate) {
+        throw new BadRequestException(`No authorized price configured for item '${item.sku}'`);
+      }
+
+      const authoritativeRate = roundMoney(baseRate.times(uomFactor));
+      const clientRate = toDecimal(line.rate);
+      if (clientRate.minus(authoritativeRate).abs().greaterThan(0.01)) {
+        throw new BadRequestException(
+          `Unauthorized unit rate for item '${item.sku}'. Expected ₹${authoritativeRate.toFixed(2)}`,
+        );
+      }
+
       const gstBreakdown = computeLineGst({
-        rate: line.rate,
+        rate: authoritativeRate.toNumber(),
         qty: line.qty,
         gstRate: item.gstRate.toNumber(),
         isInterState,
@@ -82,7 +142,7 @@ export class OrdersService {
         itemId: line.itemId,
         qty: toDecimal(line.qty),
         uom: line.uom,
-        rate: toDecimal(line.rate),
+        rate: authoritativeRate,
         taxable: toDecimal(gstBreakdown.taxable),
         gstRate: toDecimal(item.gstRate),
         cgst: toDecimal(gstBreakdown.cgst),
@@ -99,6 +159,23 @@ export class OrdersService {
     const fy = getFinancialYear();
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock clientUuid inside transaction so concurrent duplicate submissions return the original order cleanly
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`order-client:${dto.clientUuid}`}))`;
+
+      const concurrentExisting = await tx.salesOrder.findUnique({
+        where: { clientUuid: dto.clientUuid },
+        include: {
+          party: true,
+          lines: { include: { item: true } },
+        },
+      });
+      if (concurrentExisting) {
+        if (concurrentExisting.companyId !== companyId) {
+          throw new ForbiddenException('Access denied for duplicate clientUuid');
+        }
+        return concurrentExisting;
+      }
+
       // Sequence allocation under row lock
       const seq = await tx.$queryRaw<Array<{ next_no: number }>>`
         INSERT INTO document_sequence (id, company_id, doc_type, fy, next_no, updated_at)
@@ -116,7 +193,7 @@ export class OrdersService {
           companyId,
           number: orderNumber,
           partyId: dto.partyId,
-          salesmanId: dto.salesmanId || salesmanId,
+          salesmanId: resolvedSalesmanId,
           status: OrderStatus.SUBMITTED,
           clientUuid: dto.clientUuid,
           geoLat: dto.geoLat !== undefined ? toDecimal(dto.geoLat).toNumber() : null,
@@ -163,8 +240,10 @@ export class OrdersService {
 
   async listOrders(
     companyId: string,
-    filters?: { salesmanId?: string; status?: OrderStatus; partyId?: string },
+    filters?: { salesmanId?: string; status?: OrderStatus; partyId?: string; limit?: number; offset?: number },
   ) {
+    const take = Math.min(Math.max(1, Number(filters?.limit) || 200), 500);
+    const skip = Math.max(0, Number(filters?.offset) || 0);
     return this.prisma.salesOrder.findMany({
       where: {
         companyId,
@@ -179,10 +258,12 @@ export class OrdersService {
         invoices: true,
       },
       orderBy: { createdAt: 'desc' },
+      take,
+      skip,
     });
   }
 
-  async getOrder(companyId: string, orderId: string) {
+  async getOrder(companyId: string, orderId: string, salesmanId?: string) {
     const order = await this.prisma.salesOrder.findFirst({
       where: { id: orderId, companyId },
       include: {
@@ -205,6 +286,10 @@ export class OrdersService {
 
     if (!order) {
       throw new NotFoundException(`Order '${orderId}' not found`);
+    }
+
+    if (salesmanId && order.salesmanId !== salesmanId) {
+      throw new ForbiddenException('Access denied: order does not belong to you');
     }
 
     return order;

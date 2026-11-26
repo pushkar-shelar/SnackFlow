@@ -11,6 +11,22 @@ import { Request } from 'express';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { v4 as uuidv4 } from 'uuid';
 
+const SENSITIVE_KEY_PATTERN = /password|passcode|token|secret|authorization|cookie|credential/i;
+
+function redactSensitive(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitive);
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = SENSITIVE_KEY_PATTERN.test(key) ? '[REDACTED]' : redactSensitive(val);
+    }
+    return out;
+  }
+  return value;
+}
+
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -30,11 +46,13 @@ export class AuditInterceptor implements NestInterceptor {
     const requestId = (request.headers['x-request-id'] as string) || uuidv4();
     const action = `${method} ${request.url}`;
     const entity = request.url.split('/')[3] || 'resource';
+    const sanitizedBefore = redactSensitive(request.body ?? {}) as object;
 
     return next.handle().pipe(
       tap(async (responseBody: any) => {
         try {
           const entityId = responseBody?.id || (request.params as any)?.id || 'unknown';
+          const sanitizedAfter = redactSensitive(responseBody ?? {}) as object;
           await this.prisma.auditLog.create({
             data: {
               companyId,
@@ -42,8 +60,8 @@ export class AuditInterceptor implements NestInterceptor {
               action,
               entity,
               entityId: String(entityId),
-              beforeJson: request.body ?? {},
-              afterJson: responseBody ?? {},
+              beforeJson: sanitizedBefore,
+              afterJson: sanitizedAfter,
               ip,
               requestId,
             },

@@ -21,6 +21,13 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 characters'),
   HMAC_SHARE_SECRET: z.string().min(16, 'HMAC_SHARE_SECRET must be at least 16 characters'),
 
+  // Web, Proxy & Cookie Security
+  WEB_BASE_URL: z.string().default('http://localhost:3000'),
+  CORS_ORIGIN: z.string().optional(),
+  TRUST_PROXY: z.string().optional(),
+  COOKIE_SAMESITE: z.enum(['strict', 'lax', 'none']).optional(),
+  COOKIE_SECURE: z.enum(['true', 'false']).optional(),
+
   // SMTP & Mailpit
   SMTP_HOST: z.string().default('localhost'),
   SMTP_PORT: z.coerce.number().default(1025),

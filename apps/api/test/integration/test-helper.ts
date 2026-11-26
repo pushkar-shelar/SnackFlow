@@ -47,7 +47,11 @@ export async function createTestContext(): Promise<TestContext> {
   const users = {} as Record<Role, { id: string; email: string; token: string }>;
 
   for (const role of [Role.ADMIN, Role.SALESMAN, Role.PRODUCTION, Role.AUDITOR, Role.OWNER]) {
-    const user = dbUsers.find((u) => u.role === role);
+    const user =
+      (role === Role.SALESMAN
+        ? dbUsers.find((u) => u.email === 'salesman@snackflow.local')
+        : dbUsers.find((u) => u.role === role && u.email.endsWith('.local'))) ||
+      dbUsers.find((u) => u.role === role);
     if (!user) {
       throw new Error(`Seeded user for role ${role} not found`);
     }

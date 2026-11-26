@@ -19,16 +19,17 @@ export class AlertsService {
 
   constructor(@Inject(PrismaReadService) private readonly prismaRead: PrismaReadService) {}
 
-  async getActiveAlerts(): Promise<SystemAlert[]> {
+  async getActiveAlerts(companyId?: string): Promise<SystemAlert[]> {
     const alerts: SystemAlert[] = [];
 
     // 1. Check for Low Stock Reorder Alerts
     const items = await this.prismaRead.item.findMany({
       where: {
+        ...(companyId ? { companyId } : {}),
         reorderLevel: { not: null },
       },
       include: {
-        stockBalances: true,
+        stockBalances: companyId ? { where: { companyId } } : true,
       },
     });
 
@@ -56,6 +57,9 @@ export class AlertsService {
 
     // 2. Check for Production Run Variances (> 3%)
     const recentRuns = await this.prismaRead.productionRun.findMany({
+      where: {
+        ...(companyId ? { companyId } : {}),
+      },
       take: 10,
       orderBy: { createdAt: 'desc' },
       include: {

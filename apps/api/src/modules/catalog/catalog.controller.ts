@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Inject } from '@nestjs/common';
+import { Controller, Get, Param, Query, Inject, ParseUUIDPipe } from '@nestjs/common';
 import { CatalogService } from './catalog.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
@@ -31,7 +31,7 @@ export class CatalogController {
   @Get('items/:id')
   async getItem(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.catalogService.getItem(user.companyId, id);
   }
@@ -54,7 +54,7 @@ export class CatalogController {
   @Get('price-lists/:id')
   async getPriceList(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.catalogService.getPriceList(user.companyId, id);
   }
@@ -63,8 +63,8 @@ export class CatalogController {
   @Get('rate')
   async getRate(
     @CurrentUser() user: AuthenticatedUser,
-    @Query('partyId') partyId: string,
-    @Query('itemId') itemId: string,
+    @Query('partyId', ParseUUIDPipe) partyId: string,
+    @Query('itemId', ParseUUIDPipe) itemId: string,
   ) {
     const rate = await this.catalogService.getPartyEffectiveRate(user.companyId, partyId, itemId);
     return { partyId, itemId, rate };

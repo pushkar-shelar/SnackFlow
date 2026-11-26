@@ -68,6 +68,9 @@ services:
       JWT_ACCESS_SECRET: 'snackflow-development-super-secret-access-token-2026-secure'
       JWT_REFRESH_SECRET: 'snackflow-development-super-secret-refresh-token-2026-secure'
       HMAC_SHARE_SECRET: 'snackflow-development-hmac-share-invoice-key-2026-secure'
+      WEB_BASE_URL: 'http://localhost:3000'
+      CORS_ORIGIN: 'http://localhost:3000,http://127.0.0.1:3000'
+      COOKIE_SECURE: 'false'
       SMTP_HOST: 'mailpit'
       SMTP_PORT: 1025
     ports:
@@ -90,6 +93,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: 'postgresql://snackflow:snackflow123@postgres:5432/snackflow_db?schema=public'
       REDIS_URL: 'redis://redis:6379'
+      JWT_ACCESS_SECRET: 'snackflow-development-super-secret-access-token-2026-secure'
+      JWT_REFRESH_SECRET: 'snackflow-development-super-secret-refresh-token-2026-secure'
+      HMAC_SHARE_SECRET: 'snackflow-development-hmac-share-invoice-key-2026-secure'
       SMTP_HOST: 'mailpit'
       SMTP_PORT: 1025
     depends_on:
@@ -104,6 +110,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: 'http://localhost:4000/api/v1'
     container_name: snackflow-web
     restart: unless-stopped
     environment:

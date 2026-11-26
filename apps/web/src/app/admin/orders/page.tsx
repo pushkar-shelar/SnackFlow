@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getStoredSession } from '@/lib/api';
 import { RbacGate } from '@/components/common/RbacGate';
 import {
   Inbox,
@@ -22,10 +22,20 @@ import {
   AlertTriangle,
   AlertCircle,
   Clock,
+  Wallet,
 } from 'lucide-react';
 
 export default function AdminOrdersPage() {
-  const [activeAdminTab, setActiveAdminTab] = useState<'ORDERS' | 'STORES'>('ORDERS');
+  const [activeAdminTab, setActiveAdminTab] = useState<'ORDERS' | 'STORES' | 'PAYMENTS'>('ORDERS');
+  const [partiesList, setPartiesList] = useState<any[]>([]);
+  const [paymentsList, setPaymentsList] = useState<any[]>([]);
+  const [paymentPartyId, setPaymentPartyId] = useState<string>('');
+  const [paymentAmount, setPaymentAmount] = useState<string>('4000');
+  const [paymentMode, setPaymentMode] = useState<'UPI' | 'CASH' | 'NEFT' | 'CHEQUE'>('UPI');
+  const [paymentRef, setPaymentRef] = useState<string>('');
+  const [partyOutstanding, setPartyOutstanding] = useState<{ totalInvoiced: number; totalReceived: number; outstanding: number } | null>(null);
+  const [paymentSubmitting, setPaymentSubmitting] = useState<boolean>(false);
+  const [paymentMsg, setPaymentMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [storeApplications, setStoreApplications] = useState<any[]>([]);
   const [approvalForms, setApprovalForms] = useState<Record<string, { creditLimit: number; creditDays: number }>>({});
   const [approvingAppId, setApprovingAppId] = useState<string | null>(null);
@@ -38,19 +48,41 @@ export default function AdminOrdersPage() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [shareModalOpen, setShareModalOpen] = useState<boolean>(false);
+  const [shareData, setShareData] = useState<{
+    publicUrl: string;
+    whatsappUrl: string;
+    upiUri: string;
+    invoiceNumber: string;
+    expiresAt: string;
+  } | null>(null);
+  const [shareLoading, setShareLoading] = useState<boolean>(false);
+  const [stockByItem, setStockByItem] = useState<Record<string, number>>({});
   const [_invoicePreview, setInvoicePreview] = useState<any | null>(null);
 
   const loadOrders = useCallback(async () => {
     try {
-      const data = await apiFetch('/orders');
-      setOrders(data);
-      if (data.length > 0 && !selectedOrderId) {
-        setSelectedOrderId(data[0].id);
+      const [data, balances] = await Promise.all([
+        apiFetch('/orders'),
+        apiFetch<any[]>('/inventory/balances').catch(() => []),
+      ]);
+      if (Array.isArray(balances)) {
+        const totals: Record<string, number> = {};
+        for (const b of balances) {
+          const itemKey = b.itemId || b.item?.id;
+          if (itemKey) {
+            totals[itemKey] = (totals[itemKey] || 0) + Number(b.qty ?? 0);
+          }
+        }
+        setStockByItem(totals);
+      }
+      setOrders(Array.isArray(data) ? data : []);
+      if (Array.isArray(data) && data.length > 0) {
+        setSelectedOrderId((prev) => prev || data[0].id);
       }
     } catch (e) {
       console.error('Failed to load orders', e);
     }
-  }, [selectedOrderId]);
+  }, []);
 
   const loadOrderDetails = useCallback(async (id: string) => {
     try {
@@ -103,10 +135,104 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const handleRejectStore = async (appId: string) => {
+    setApprovingAppId(appId);
+    try {
+      await apiFetch(`/parties/applications/${appId}/reject`, {
+        method: 'POST',
+      });
+      setStoreApplications((prev) =>
+        prev.map((a) => (a.id === appId ? { ...a, status: 'REJECTED' } : a)),
+      );
+      loadStoreApplications();
+    } catch (e: any) {
+      alert(e.message || 'Failed to reject store application');
+    } finally {
+      setApprovingAppId(null);
+    }
+  };
+
+  const loadPartiesAndPayments = useCallback(async () => {
+    try {
+      const [partiesRes, paymentsRes] = await Promise.all([
+        apiFetch<any[]>('/parties').catch(() => []),
+        apiFetch<any[]>('/payments?limit=50').catch(() => []),
+      ]);
+      if (Array.isArray(partiesRes)) {
+        const customers = partiesRes.filter((p) => String(p.kind || '').startsWith('CUSTOMER'));
+        setPartiesList(customers);
+        setPaymentPartyId((prev) => prev || customers[0]?.id || '');
+      }
+      if (Array.isArray(paymentsRes)) {
+        setPaymentsList(paymentsRes);
+      }
+    } catch (e) {
+      console.warn('Failed to load parties or payments', e);
+    }
+  }, []);
+
   useEffect(() => {
+    const session = getStoredSession();
+    if (!session || !['ADMIN', 'OWNER'].includes(session.role)) {
+      return;
+    }
     loadOrders();
     loadStoreApplications();
-  }, [loadOrders, loadStoreApplications]);
+    loadPartiesAndPayments();
+  }, [loadOrders, loadStoreApplications, loadPartiesAndPayments]);
+
+  useEffect(() => {
+    if (!paymentPartyId) {
+      setPartyOutstanding(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch<any>(`/parties/${paymentPartyId}/outstanding`)
+      .then((res) => {
+        if (!cancelled) setPartyOutstanding(res);
+      })
+      .catch(() => {
+        if (!cancelled) setPartyOutstanding(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentPartyId]);
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = Number(paymentAmount);
+    if (!paymentPartyId || !(amt > 0)) {
+      setPaymentMsg({ type: 'error', text: 'Select a customer and enter a positive payment amount.' });
+      return;
+    }
+    setPaymentSubmitting(true);
+    setPaymentMsg(null);
+    try {
+      const refStr = paymentRef.trim() || `PAY-${Date.now().toString().slice(-6)}`;
+      await apiFetch('/payments', {
+        method: 'POST',
+        body: JSON.stringify({
+          partyId: paymentPartyId,
+          amount: amt,
+          mode: paymentMode,
+          reference: refStr,
+        }),
+      });
+      const updatedOut = await apiFetch<any>(`/parties/${paymentPartyId}/outstanding`).catch(() => null);
+      if (updatedOut) setPartyOutstanding(updatedOut);
+      setPaymentMsg({
+        type: 'success',
+        text: `Payment of ₹${amt.toLocaleString('en-IN')} (${paymentMode}) recorded & FIFO-allocated! Remaining outstanding: ₹${Number(updatedOut?.outstanding ?? 0).toLocaleString('en-IN')}.`,
+      });
+      setPaymentRef('');
+      await Promise.all([loadPartiesAndPayments(), loadOrders()]);
+    } catch (err: any) {
+      setPaymentMsg({ type: 'error', text: err?.message || 'Failed to record payment' });
+    } finally {
+      setPaymentSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedOrderId) {
@@ -120,10 +246,15 @@ export default function AdminOrdersPage() {
       // Don't trigger if user is typing in an input
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
-      if (!selectedOrder || selectedOrder.status !== 'SUBMITTED') return;
+      if (actionLoading || !selectedOrder || selectedOrder.status !== 'SUBMITTED') return;
 
       if (e.key === 'a' || e.key === 'A') {
-        if (!selectedOrder.hasShortage) {
+        const computedHasShortage =
+          selectedOrder.hasShortage ??
+          (selectedOrder.lines || []).some(
+            (l: any) => (stockByItem[l.itemId] ?? Number.POSITIVE_INFINITY) < Number(l.qty || 0),
+          );
+        if (!computedHasShortage) {
           handleApproveOrder('APPROVE_FULL');
         } else {
           alert('Mandatory Stock Control: Order has items out of stock. Use "Approve Available & Backorder" or "Hold".');
@@ -137,7 +268,7 @@ export default function AdminOrdersPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedOrder]);
+  }, [selectedOrder, actionLoading, stockByItem]);
 
   const handleApproveOrder = async (action: 'APPROVE_FULL' | 'APPROVE_AVAILABLE_BACKORDER') => {
     if (!selectedOrderId) return;
@@ -225,6 +356,23 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const handleOpenShareModal = async (invoiceId?: string) => {
+    setShareModalOpen(true);
+    setShareData(null);
+    if (!invoiceId) return;
+    setShareLoading(true);
+    try {
+      const data = await apiFetch<any>(`/invoices/${invoiceId}/share`);
+      if (data?.publicUrl) {
+        setShareData(data);
+      }
+    } catch (e: any) {
+      console.warn('Could not load signed share link', e);
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
   const filteredOrders = orders.filter((ord) => {
     const matchesStatus = statusFilter === 'ALL' || ord.status === statusFilter;
     const matchesSearch =
@@ -284,6 +432,15 @@ export default function AdminOrdersPage() {
                   {pendingStoreCount}
                 </span>
               )}
+            </button>
+            <button
+              onClick={() => setActiveAdminTab('PAYMENTS')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                activeAdminTab === 'PAYMENTS' ? 'bg-white shadow-xs text-amber-900 font-bold' : 'text-stone-600'
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5 text-amber-600" />
+              <span>Payments</span>
             </button>
           </div>
 
@@ -490,14 +647,29 @@ export default function AdminOrdersPage() {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleApproveStore(app.id)}
-                          disabled={isApproving}
-                          className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                        >
-                          <ShieldCheck className="w-4 h-4" />
-                          {isApproving ? 'Approving Store...' : 'Approve & Onboard Store'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleApproveStore(app.id)}
+                            disabled={isApproving}
+                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                            {isApproving ? 'Processing...' : 'Approve & Onboard Store'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectStore(app.id)}
+                            disabled={isApproving}
+                            className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition-all disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ) : app.status === 'REJECTED' ? (
+                      <div className="p-2.5 bg-rose-50 rounded-xl border border-rose-200 text-rose-800 text-[11px] font-medium flex items-center gap-2">
+                        <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>Store application was rejected.</span>
                       </div>
                     ) : (
                       <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
@@ -511,7 +683,7 @@ export default function AdminOrdersPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : activeAdminTab === 'ORDERS' ? (
       /* Split View Container */
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
         {/* Left Column: Orders Inbox List (5 cols) */}
@@ -655,7 +827,19 @@ export default function AdminOrdersPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100">
-                      {selectedOrder.lines?.map((line: any) => (
+                      {selectedOrder.lines?.map((line: any) => {
+                        const liveOnHand = stockByItem[line.itemId];
+                        const onHand = line.onHandQty !== undefined ? line.onHandQty : liveOnHand;
+                        const computedCoverage =
+                          line.stockCoverage ||
+                          (onHand === undefined
+                            ? 'COVERED'
+                            : onHand <= 0
+                            ? 'OUT_OF_STOCK'
+                            : onHand < Number(line.qty || 0)
+                            ? 'PARTIAL'
+                            : 'COVERED');
+                        return (
                         <tr key={line.id} className="hover:bg-stone-50/60">
                           <td className="p-3">
                             <div className="font-bold text-stone-900">{line.item?.name}</div>
@@ -675,25 +859,26 @@ export default function AdminOrdersPage() {
                           </td>
                           <td className="p-3 text-center">
                             {/* Line coverage chip */}
-                            {line.stockCoverage === 'OUT_OF_STOCK' ? (
+                            {computedCoverage === 'OUT_OF_STOCK' ? (
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
                                 <AlertCircle className="w-3 h-3 text-rose-600" />
                                 Out of Stock (0 on hand)
                               </span>
-                            ) : line.stockCoverage === 'PARTIAL' ? (
+                            ) : computedCoverage === 'PARTIAL' ? (
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
                                 <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                Partial ({line.onHandQty} / {line.qty} {line.uom})
+                                Partial ({onHand} / {line.qty} {line.uom})
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                                 <CheckCircle className="w-3 h-3 text-emerald-600" />
-                                Covered ({line.onHandQty !== undefined ? `${line.onHandQty} on hand` : 'In Stock'})
+                                Covered ({onHand !== undefined ? `${onHand} on hand` : 'In Stock'})
                               </span>
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -802,33 +987,36 @@ export default function AdminOrdersPage() {
                   </div>
                 )}
 
-                {(selectedOrder.status === 'INVOICED' || selectedOrder.invoices?.length > 0) && (
+                {(() => {
+                  const activeInvoice = selectedOrder.invoices?.find((i: any) => i.status !== 'CANCELLED') || selectedOrder.invoices?.[0];
+                  if (selectedOrder.status !== 'INVOICED' && !activeInvoice) return null;
+                  return (
                   <div className="space-y-3">
                     <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs">
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-bold text-blue-900 flex items-center gap-1.5">
                           <FileText className="w-4 h-4 text-blue-600" />
-                          Generated Invoice: {selectedOrder.invoices?.[0]?.number || 'Posted'}
+                          Generated Invoice: {activeInvoice?.number || 'Posted'}
                         </span>
                         <span className="text-[10px] font-bold bg-blue-200 text-blue-900 px-2 py-0.5 rounded">
-                          POSTED
+                          {activeInvoice?.status || 'POSTED'}
                         </span>
                       </div>
 
                       <div className="flex items-center justify-between text-blue-800 text-xs">
-                        <span>Invoice Total: <b>₹{Number(selectedOrder.invoices?.[0]?.total || selectedOrder.grandTotal).toLocaleString('en-IN')}</b></span>
+                        <span>Invoice Total: <b>₹{Number(activeInvoice?.total || selectedOrder.grandTotal).toLocaleString('en-IN')}</b></span>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => setShareModalOpen(true)}
+                            onClick={() => handleOpenShareModal(activeInvoice?.id)}
                             className="flex items-center gap-1 text-[11px] font-bold px-3 py-1 rounded-lg bg-white border border-blue-300 text-blue-700 hover:bg-blue-50"
                           >
                             <Share2 className="w-3.5 h-3.5" />
                             Share (WhatsApp/QR)
                           </button>
 
-                          {selectedOrder.status !== 'DISPATCHED' && (
+                          {selectedOrder.status !== 'DISPATCHED' && activeInvoice && activeInvoice.status !== 'CANCELLED' && (
                             <button
-                              onClick={() => handleDispatch(selectedOrder.invoices[0].id)}
+                              onClick={() => handleDispatch(activeInvoice.id)}
                               disabled={actionLoading}
                               className="flex items-center gap-1 text-[11px] font-bold px-3 py-1 rounded-lg bg-purple-600 text-white hover:bg-purple-700 shadow-xs"
                             >
@@ -840,21 +1028,35 @@ export default function AdminOrdersPage() {
                       </div>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
 
                 {selectedOrder.status === 'DISPATCHED' && (
-                  <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-between text-xs">
+                  <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 flex flex-wrap items-center justify-between gap-2 text-xs">
                     <span className="font-bold text-purple-900 flex items-center gap-1.5">
                       <Truck className="w-4 h-4 text-purple-600" />
                       Dispatched! Finished goods batches allocated & stock ledger updated.
                     </span>
-                    <button
-                      onClick={() => setShareModalOpen(true)}
-                      className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-white border border-purple-300 text-purple-800 rounded-lg shadow-xs hover:bg-purple-100/50"
-                    >
-                      <Share2 className="w-3.5 h-3.5 text-purple-600" />
-                      Share Delivery Slip
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedOrder.party?.id) setPaymentPartyId(selectedOrder.party.id);
+                          setActiveAdminTab('PAYMENTS');
+                        }}
+                        className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-emerald-600 text-white rounded-lg shadow-xs hover:bg-emerald-700"
+                      >
+                        <Wallet className="w-3.5 h-3.5" />
+                        Record Payment
+                      </button>
+                      <button
+                        onClick={() => handleOpenShareModal((selectedOrder.invoices?.find((i: any) => i.status !== 'CANCELLED') || selectedOrder.invoices?.[0])?.id)}
+                        className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-white border border-purple-300 text-purple-800 rounded-lg shadow-xs hover:bg-purple-100/50"
+                      >
+                        <Share2 className="w-3.5 h-3.5 text-purple-600" />
+                        Share Delivery Slip
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -866,11 +1068,148 @@ export default function AdminOrdersPage() {
           )}
         </div>
       </div>
+      ) : null}
+
+      {activeAdminTab === 'PAYMENTS' && (
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <form onSubmit={handleRecordPayment} className="lg:col-span-5 bg-white p-5 rounded-2xl border border-stone-200 shadow-xs space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-stone-100">
+              <Wallet className="w-5 h-5 text-amber-600" />
+              <div>
+                <h2 className="text-sm font-bold text-stone-900">Record Customer Payment (FIFO)</h2>
+                <p className="text-[11px] text-stone-500">Allocates payment against oldest unpaid POSTED invoices</p>
+              </div>
+            </div>
+
+            {paymentMsg && (
+              <div
+                className={`p-3 rounded-xl text-xs font-semibold border ${
+                  paymentMsg.type === 'success'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border-rose-200 text-rose-800'
+                }`}
+              >
+                {paymentMsg.text}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Customer / Party *</label>
+              <select
+                value={paymentPartyId}
+                onChange={(e) => setPaymentPartyId(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
+              >
+                {partiesList.map((pt) => (
+                  <option key={pt.id} value={pt.id}>
+                    {pt.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {partyOutstanding && (
+              <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-stone-50 border border-stone-200 text-xs">
+                <div>
+                  <div className="text-[10px] text-stone-400 font-bold uppercase">Invoiced</div>
+                  <div className="font-bold text-stone-900">₹{Number(partyOutstanding.totalInvoiced).toLocaleString('en-IN')}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-stone-400 font-bold uppercase">Received</div>
+                  <div className="font-bold text-emerald-700">₹{Number(partyOutstanding.totalReceived).toLocaleString('en-IN')}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-stone-400 font-bold uppercase">Outstanding</div>
+                  <div className="font-extrabold text-rose-700">₹{Number(partyOutstanding.outstanding).toLocaleString('en-IN')}</div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">Amount (₹) *</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  required
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-stone-200 font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">Mode *</label>
+                <select
+                  value={paymentMode}
+                  onChange={(e) => setPaymentMode(e.target.value as any)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white"
+                >
+                  <option value="UPI">UPI</option>
+                  <option value="NEFT">NEFT</option>
+                  <option value="CASH">CASH</option>
+                  <option value="CHEQUE">CHEQUE</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Reference / UTR No.</label>
+              <input
+                type="text"
+                placeholder="e.g. UPI-RETAILER-A-4000"
+                value={paymentRef}
+                onChange={(e) => setPaymentRef(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-xl border border-stone-200 font-mono"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={paymentSubmitting}
+              className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs disabled:opacity-50"
+            >
+              {paymentSubmitting ? 'Recording Payment...' : 'Record Payment'}
+            </button>
+          </form>
+
+          <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-stone-200 shadow-xs space-y-3">
+            <h2 className="text-sm font-bold text-stone-900 pb-3 border-b border-stone-100">
+              Recent Payments ({paymentsList.length})
+            </h2>
+            {paymentsList.length === 0 ? (
+              <p className="text-xs text-stone-400 py-8 text-center">No customer payments recorded yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-stone-50 text-stone-500 font-bold uppercase text-[10px] border-b border-stone-200">
+                    <tr>
+                      <th className="p-2.5">Payment #</th>
+                      <th className="p-2.5">Customer</th>
+                      <th className="p-2.5">Mode / Ref</th>
+                      <th className="p-2.5 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {paymentsList.map((pm) => (
+                      <tr key={pm.id}>
+                        <td className="p-2.5 font-mono font-bold text-stone-900">{pm.paymentNo}</td>
+                        <td className="p-2.5 text-stone-700">{pm.party?.name || '-'}</td>
+                        <td className="p-2.5 text-stone-500">{pm.mode} • {pm.reference}</td>
+                        <td className="p-2.5 text-right font-bold text-emerald-700">₹{Number(pm.amount).toLocaleString('en-IN')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Share Invoice & UPI QR Modal */}
       {shareModalOpen && selectedOrder && (
-        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div role="dialog" aria-modal="true" aria-label="Share Invoice and Payment QR" className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white max-w-sm w-full rounded-2xl p-5 shadow-2xl border border-stone-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-stone-100">
               <h3 className="font-bold text-stone-900 text-sm flex items-center gap-2">
@@ -878,6 +1217,8 @@ export default function AdminOrdersPage() {
                 Share Invoice & Payment QR
               </h3>
               <button
+                type="button"
+                aria-label="Close share modal"
                 onClick={() => setShareModalOpen(false)}
                 className="text-stone-400 hover:text-stone-600 text-xs font-bold"
               >
@@ -885,43 +1226,61 @@ export default function AdminOrdersPage() {
               </button>
             </div>
 
-            {/* UPI QR Display Mock */}
-            <div className="text-center p-4 bg-stone-50 rounded-xl border border-stone-200 space-y-2">
-              <div className="w-32 h-32 mx-auto bg-white p-2 rounded-xl border border-stone-300 shadow-xs flex items-center justify-center">
-                <QrCode className="w-28 h-28 text-stone-800" />
-              </div>
-              <div className="text-xs font-bold text-stone-900">
-                UPI Pay: ₹{Number(selectedOrder.grandTotal).toLocaleString('en-IN')}
-              </div>
-              <p className="text-[10px] text-stone-500 font-mono">
-                upi://pay?pa=srimurugan@okaxis&am={selectedOrder.grandTotal}&pn=SriMuruganSnacks
-              </p>
-            </div>
+            {(() => {
+              const totalStr = Number(selectedOrder.grandTotal || 0).toFixed(2);
+              const invNo = shareData?.invoiceNumber || selectedOrder.invoices?.[0]?.number || selectedOrder.number;
+              const upiUri =
+                shareData?.upiUri ||
+                `upi://pay?pa=srimurugansnacks@okhdfcbank&pn=Sri%20Murugan%20Snacks&am=${totalStr}&cu=INR&tn=${encodeURIComponent(`Invoice ${invNo}`)}`;
+              const whatsappUrl =
+                shareData?.whatsappUrl ||
+                `https://wa.me/?text=${encodeURIComponent(
+                  `Invoice ${invNo} from Sri Murugan Snacks. Total: ₹${totalStr}. UPI Pay: ${upiUri}`,
+                )}`;
+              const shareUrl = shareData?.publicUrl || '';
 
-            {/* Share Buttons */}
-            <div className="space-y-2">
-              <a
-                href={`https://wa.me/?text=${encodeURIComponent(
-                  `Invoice from Sri Murugan Snacks for Order ${selectedOrder.number}. Total: ₹${selectedOrder.grandTotal}. Pay UPI: upi://pay?pa=srimurugan@okaxis&am=${selectedOrder.grandTotal}`,
-                )}`}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-xs transition-colors"
-              >
-                <MessageSquare className="w-4 h-4" />
-                Share on WhatsApp (wa.me)
-              </a>
+              return (
+                <>
+                  {/* UPI QR Display */}
+                  <div className="text-center p-4 bg-stone-50 rounded-xl border border-stone-200 space-y-2">
+                    <div className="w-32 h-32 mx-auto bg-white p-2 rounded-xl border border-stone-300 shadow-xs flex items-center justify-center">
+                      <QrCode className="w-28 h-28 text-stone-800" />
+                    </div>
+                    <div className="text-xs font-bold text-stone-900">
+                      UPI Pay: ₹{Number(selectedOrder.grandTotal).toLocaleString('en-IN')}
+                    </div>
+                    <p className="text-[10px] text-stone-500 font-mono break-all">
+                      {shareLoading ? 'Signing HMAC link...' : upiUri}
+                    </p>
+                  </div>
 
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(`https://snackflow.local/invoice/${selectedOrder.invoices?.[0]?.id || selectedOrder.id}`);
-                  alert('Signed invoice link copied to clipboard!');
-                }}
-                className="w-full flex items-center justify-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs py-2.5 rounded-xl border border-stone-200 transition-colors"
-              >
-                Copy 7-Day HMAC Link
-              </button>
-            </div>
+                  {/* Share Buttons */}
+                  <div className="space-y-2">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-xs transition-colors"
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                      Share on WhatsApp (wa.me)
+                    </a>
+
+                    <button
+                      type="button"
+                      disabled={!shareUrl || shareLoading}
+                      onClick={() => {
+                        navigator.clipboard.writeText(shareUrl);
+                        alert('Signed HMAC invoice link copied to clipboard!');
+                      }}
+                      className="w-full flex items-center justify-center gap-2 bg-stone-100 hover:bg-stone-200 disabled:opacity-50 text-stone-700 font-bold text-xs py-2.5 rounded-xl border border-stone-200 transition-colors"
+                    >
+                      {shareLoading ? 'Generating Signed Link...' : shareUrl ? 'Copy 24-Hr Signed HMAC Link' : 'Signed Link Unavailable'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

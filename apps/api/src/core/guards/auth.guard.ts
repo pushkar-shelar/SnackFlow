@@ -31,9 +31,16 @@ export class AuthGuard implements CanActivate {
     if (isPublic) {
       if (token) {
         try {
-          const secret = this.configService.get<string>('JWT_ACCESS_SECRET') || 'default-secret';
-          const payload = await this.jwtService.verifyAsync(token, { secret });
-          request.user = payload as AuthenticatedUser;
+          const secret = this.configService.get<string>('JWT_ACCESS_SECRET');
+          if (secret) {
+            const payload = await this.jwtService.verifyAsync(token, {
+              secret,
+              algorithms: ['HS256'],
+            });
+            if (payload?.userId && payload?.companyId && payload?.role) {
+              request.user = payload as AuthenticatedUser;
+            }
+          }
         } catch {
           // Public route: ignore invalid token
         }
@@ -45,9 +52,19 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Authentication token required');
     }
 
+    const secret = this.configService.get<string>('JWT_ACCESS_SECRET');
+    if (!secret) {
+      throw new UnauthorizedException('Authentication secret is not configured');
+    }
+
     try {
-      const secret = this.configService.get<string>('JWT_ACCESS_SECRET') || 'default-secret';
-      const payload = await this.jwtService.verifyAsync(token, { secret });
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret,
+        algorithms: ['HS256'],
+      });
+      if (!payload?.userId || !payload?.companyId || !payload?.role) {
+        throw new UnauthorizedException('Malformed authentication token');
+      }
       request.user = payload as AuthenticatedUser;
       return true;
     } catch {

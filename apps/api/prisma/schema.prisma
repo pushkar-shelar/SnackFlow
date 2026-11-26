@@ -346,7 +346,10 @@ model SalesOrder {
   lines    SalesOrderLine[]
   invoices Invoice[]
 
+  @@unique([companyId, number])
   @@index([companyId, status, createdAt])
+  @@index([partyId])
+  @@index([salesmanId, createdAt])
   @@map("sales_order")
 }
 
@@ -369,6 +372,7 @@ model SalesOrderLine {
   item         Item               @relation(fields: [itemId], references: [id])
   reservations StockReservation[]
 
+  @@index([orderId])
   @@map("sales_order_line")
 }
 
@@ -384,6 +388,8 @@ model StockReservation {
   orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
   item      Item           @relation(fields: [itemId], references: [id])
 
+  @@index([companyId, itemId])
+  @@index([orderLineId])
   @@map("stock_reservation")
 }
 
@@ -416,6 +422,8 @@ model Invoice {
   paymentAllocations PaymentAllocation[]
 
   @@unique([companyId, fy, number])
+  @@index([companyId, status, createdAt])
+  @@index([orderId])
   @@map("invoice")
 }
 
@@ -470,6 +478,8 @@ model Dispatch {
   invoice Invoice        @relation(fields: [invoiceId], references: [id])
   lines   DispatchLine[]
 
+  @@unique([companyId, dispatchNo])
+  @@unique([invoiceId])
   @@map("dispatch")
 }
 
@@ -502,6 +512,8 @@ model CreditNote {
   company Company @relation(fields: [companyId], references: [id])
   invoice Invoice @relation(fields: [invoiceId], references: [id])
 
+  @@unique([companyId, creditNoteNo])
+  @@index([invoiceId])
   @@map("credit_note")
 }
 
@@ -520,6 +532,8 @@ model Payment {
   party       Party               @relation(fields: [partyId], references: [id])
   allocations PaymentAllocation[]
 
+  @@unique([companyId, paymentNo])
+  @@index([companyId, partyId, paymentDate])
   @@map("payment")
 }
 
@@ -549,6 +563,8 @@ model Purchase {
   party   Party          @relation(fields: [partyId], references: [id])
   lines   PurchaseLine[]
 
+  @@unique([companyId, purchaseNo])
+  @@index([companyId, purchaseDate])
   @@map("purchase")
 }
 
@@ -590,6 +606,8 @@ model ProductionRun {
   qcCheckpoint       QcCheckpoint?
   equipmentDowntimes EquipmentDowntime[]
 
+  @@unique([companyId, number])
+  @@index([companyId, status, createdAt])
   @@map("production_run")
 }
 
@@ -719,6 +737,7 @@ model StockBalance {
   batch   StockBatch? @relation(fields: [batchId], references: [id])
 
   @@unique([companyId, itemId, batchId])
+  @@index([companyId, itemId])
   @@map("stock_balance")
 }
 

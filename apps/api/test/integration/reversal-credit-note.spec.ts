@@ -102,12 +102,13 @@ describe('Integration — Reversals & Credit Notes (Stock Restoration)', () => {
     });
     expect(fgBalAfterReturn!.qty.toNumber()).toBe(50);
 
-    // 8. Verify ledger has RETURN movement row
+    // 8. Verify ledger has RETURN movement row for this credit note
     const returnLedger = await ctx.prisma.stockLedger.findFirst({
       where: {
         companyId: ctx.companyId,
         itemId: ctx.items.fgMurukku.id,
         movementType: MovementType.RETURN,
+        sourceId: cnRes.body.id,
       },
     });
     expect(returnLedger).toBeDefined();

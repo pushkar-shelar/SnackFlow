@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  Inject,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   CreatePartyDto,
@@ -47,11 +53,18 @@ export class PartiesService {
     });
   }
 
-  async getParty(companyId: string, partyId: string) {
-    return this.prisma.party.findFirst({
+  async getParty(companyId: string, partyId: string, salesmanId?: string) {
+    const party = await this.prisma.party.findFirst({
       where: { id: partyId, companyId },
       include: { priceList: { include: { items: { include: { item: true } } } } },
     });
+    if (!party) {
+      throw new NotFoundException(`Party '${partyId}' not found`);
+    }
+    if (salesmanId && party.assignedSalesmanId !== salesmanId) {
+      throw new ForbiddenException('Access denied: party is not assigned to you');
+    }
+    return party;
   }
   // 1. Salesman submits a new store application
   async applyRetailer(companyId: string, salesmanId: string, dto: CreateRetailerApplicationDto) {
@@ -98,6 +111,14 @@ export class PartiesService {
     dto: ApproveRetailerApplicationDto,
   ) {
     return this.prisma.$transaction(async (tx) => {
+      // Lock application row inside transaction to serialize concurrent approve/reject decisions
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM retailer_application WHERE id = ${applicationId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (locked.length === 0) {
+        throw new BadRequestException('Application not found');
+      }
+
       // Step A: Find the application and verify it's still PENDING
       const app = await tx.retailerApplication.findFirst({
         where: { id: applicationId, companyId },
@@ -135,6 +156,31 @@ export class PartiesService {
       });
 
       return party;
+    });
+  }
+
+  async rejectApplication(companyId: string, applicationId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM retailer_application WHERE id = ${applicationId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (locked.length === 0) {
+        throw new NotFoundException('Application not found');
+      }
+
+      const app = await tx.retailerApplication.findFirst({
+        where: { id: applicationId, companyId },
+      });
+      if (!app) {
+        throw new NotFoundException('Application not found');
+      }
+      if (app.status !== 'PENDING') {
+        throw new BadRequestException('Application is already processed');
+      }
+      return tx.retailerApplication.update({
+        where: { id: applicationId },
+        data: { status: 'REJECTED' },
+      });
     });
   }
 }

@@ -153,6 +153,10 @@ describe('SnackFlow Section 14 Authoritative Benchmark Suite', () => {
     expect(draftRes.status).toBe(201);
     const runId = draftRes.body.id;
 
+    const spiceItemInput = await ctx.prisma.item.findFirst({
+      where: { companyId: ctx.companyId, sku: 'RAW-SPICE' },
+    });
+
     const postRunRes = await request(ctx.app.getHttpServer())
       .post(`/production/runs/${runId}/post`)
       .set('Authorization', `Bearer ${ctx.users[Role.PRODUCTION].token}`)
@@ -160,7 +164,7 @@ describe('SnackFlow Section 14 Authoritative Benchmark Suite', () => {
         actualInputs: [
           { itemId: ctx.items.rmFlour.id, actualQty: 40, uom: 'KG' },
           { itemId: ctx.items.rmOil.id, actualQty: 10.5, uom: 'L' },
-          { itemId: 'c29d9e02-caac-49bd-993b-3638cc505dbb', actualQty: 1.2, uom: 'KG' }, // RM-SPICE
+          { itemId: spiceItemInput!.id, actualQty: 1.2, uom: 'KG' }, // RAW-SPICE
         ],
         goodOutputQty: 188,
         damagedPackagingQty: 6,

@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@snackflow/shared'],
-  output: 'export',
+  ...(process.env.NODE_ENV === 'production' ? { output: 'export' } : {}),
   images: { unoptimized: true },
 };
 

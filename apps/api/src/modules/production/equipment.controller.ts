@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Body, Inject } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, Inject, ParseUUIDPipe } from '@nestjs/common';
 import { ProductionService } from './production.service.js';
 import { CurrentUser, AuthenticatedUser } from '../../core/decorators/current-user.decorator.js';
 import { RequirePermission } from '../../core/decorators/require-permission.decorator.js';
@@ -34,7 +34,7 @@ export class EquipmentController {
   @Post('downtime/:id/resolve')
   async resolveDowntime(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(ResolveEquipmentDowntimeSchema)) dto: ResolveEquipmentDowntimeDto,
   ) {
     return this.productionService.resolveDowntime(user.companyId, id, dto);

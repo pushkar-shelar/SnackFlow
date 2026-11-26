@@ -18,6 +18,23 @@ import { ZodValidationPipe } from '../../core/pipes/zod-validation.pipe.js';
 export class AuthController {
   constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
+  private getRefreshCookieOptions() {
+    const isProd = process.env.NODE_ENV === 'production';
+    const secure =
+      process.env.COOKIE_SECURE !== undefined
+        ? process.env.COOKIE_SECURE === 'true'
+        : isProd;
+    const sameSite =
+      (process.env.COOKIE_SAMESITE as 'strict' | 'lax' | 'none' | undefined) ||
+      (isProd && secure ? 'none' : 'strict');
+    return {
+      httpOnly: true,
+      secure,
+      sameSite,
+      path: '/api/v1/auth',
+    };
+  }
+
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -29,13 +46,9 @@ export class AuthController {
     const ip = req.ip || (req.headers['x-forwarded-for'] as string) || '127.0.0.1';
     const result = await this.authService.login(loginDto, ip);
 
-    // Set refresh token in httpOnly, Secure, SameSite=Strict cookie
     res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      ...this.getRefreshCookieOptions(),
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      path: '/api/v1/auth',
     });
 
     return {
@@ -55,11 +68,8 @@ export class AuthController {
     const result = await this.authService.refreshToken(rawToken);
 
     res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      ...this.getRefreshCookieOptions(),
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/api/v1/auth',
     });
 
     return {
@@ -74,11 +84,11 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const rawToken = req.cookies?.refresh_token;
+    const rawToken = req.cookies?.refresh_token || (req.body as any)?.refreshToken;
     if (rawToken) {
       await this.authService.logout(rawToken);
     }
-    res.clearCookie('refresh_token', { path: '/api/v1/auth' });
+    res.clearCookie('refresh_token', this.getRefreshCookieOptions());
     return { success: true };
   }
 }

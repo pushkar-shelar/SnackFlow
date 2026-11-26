@@ -1,8 +1,8 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
 import { PrismaReadService } from '../../prisma/prisma-read.service.js';
 import { toDecimal } from '@snackflow/shared';
 import Decimal from 'decimal.js';
-import { PartyKind } from '@prisma/client';
+import { PartyKind, InvoiceStatus } from '@prisma/client';
 
 const ZERO_MONEY = new Decimal(0);
 const ZERO_QTY = new Decimal(0);
@@ -13,14 +13,35 @@ export class ReportsService {
 
   constructor(@Inject(PrismaReadService) private readonly prismaRead: PrismaReadService) {}
 
-  // 1. Sales Register
-  async getSalesRegister(startDate?: string, endDate?: string) {
-    const where: any = {};
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
+  private buildDateFilter(startDate?: string, endDate?: string) {
+    if (!startDate && !endDate) return undefined;
+    const range: { gte?: Date; lte?: Date } = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      if (isNaN(start.getTime())) {
+        throw new BadRequestException(`Invalid startDate '${startDate}'`);
+      }
+      range.gte = start;
     }
+    if (endDate) {
+      const normalized = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? `${endDate}T23:59:59.999Z` : endDate;
+      const end = new Date(normalized);
+      if (isNaN(end.getTime())) {
+        throw new BadRequestException(`Invalid endDate '${endDate}'`);
+      }
+      range.lte = end;
+    }
+    return range;
+  }
+
+  // 1. Sales Register
+  async getSalesRegister(startDate?: string, endDate?: string, companyId?: string) {
+    const createdAt = this.buildDateFilter(startDate, endDate);
+    const where: any = {
+      ...(companyId ? { companyId } : {}),
+      status: { not: InvoiceStatus.CANCELLED },
+      ...(createdAt ? { createdAt } : {}),
+    };
 
     const invoices = await this.prismaRead.invoice.findMany({
       where,
@@ -28,8 +49,8 @@ export class ReportsService {
         order: {
           include: { party: true },
         },
-        lines: {
-          include: { item: true },
+        _count: {
+          select: { lines: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -71,7 +92,7 @@ export class ReportsService {
         sgstTotal: sgst.toFixed(2),
         igstTotal: igst.toFixed(2),
         grandTotal: grand.toFixed(2),
-        lineCount: inv.lines.length,
+        lineCount: inv._count.lines,
       };
     });
 
@@ -90,8 +111,8 @@ export class ReportsService {
   }
 
   // 2. Customer-wise & Product-wise Sales
-  async getSalesByCustomer(startDate?: string, endDate?: string) {
-    const register = await this.getSalesRegister(startDate, endDate);
+  async getSalesByCustomer(startDate?: string, endDate?: string, companyId?: string) {
+    const register = await this.getSalesRegister(startDate, endDate, companyId);
     const map = new Map<string, { customerName: string; gstin: string; invoiceCount: number; taxableTotal: Decimal; grandTotal: Decimal }>();
 
     for (const row of register.rows) {
@@ -118,13 +139,15 @@ export class ReportsService {
     }));
   }
 
-  async getSalesByProduct(startDate?: string, endDate?: string) {
-    const where: any = {};
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
-    }
+  async getSalesByProduct(startDate?: string, endDate?: string, companyId?: string) {
+    const createdAt = this.buildDateFilter(startDate, endDate);
+    const where: any = {
+      invoice: {
+        ...(companyId ? { companyId } : {}),
+        status: { not: InvoiceStatus.CANCELLED },
+        ...(createdAt ? { createdAt } : {}),
+      },
+    };
 
     const lines = await this.prismaRead.invoiceLine.findMany({
       where,
@@ -133,7 +156,10 @@ export class ReportsService {
       },
     });
 
-    const map = new Map<string, { itemCode: string; itemName: string; uom: string; totalQty: Decimal; totalTaxable: Decimal }>();
+    const map = new Map<
+      string,
+      { itemCode: string; itemName: string; uom: string; totalQty: Decimal; totalTaxable: Decimal; totalTax: Decimal; totalGrand: Decimal }
+    >();
 
     for (const line of lines) {
       const key = line.item.sku;
@@ -143,10 +169,15 @@ export class ReportsService {
         uom: line.item.baseUom,
         totalQty: ZERO_QTY,
         totalTaxable: ZERO_MONEY,
+        totalTax: ZERO_MONEY,
+        totalGrand: ZERO_MONEY,
       };
 
+      const lineTax = toDecimal(line.cgst).plus(toDecimal(line.sgst)).plus(toDecimal(line.igst));
       existing.totalQty = existing.totalQty.plus(toDecimal(line.qty));
       existing.totalTaxable = existing.totalTaxable.plus(toDecimal(line.taxable));
+      existing.totalTax = existing.totalTax.plus(lineTax);
+      existing.totalGrand = existing.totalGrand.plus(toDecimal(line.total));
       map.set(key, existing);
     }
 
@@ -156,12 +187,14 @@ export class ReportsService {
       uom: v.uom,
       totalQty: v.totalQty.toFixed(2),
       totalTaxable: v.totalTaxable.toFixed(2),
+      totalTax: v.totalTax.toFixed(2),
+      totalGrand: v.totalGrand.toFixed(2),
     }));
   }
 
   // 3. GST Outward Summary (GSTR-1 & GSTR-3B shape)
-  async getGstSummary(startDate?: string, endDate?: string) {
-    const register = await this.getSalesRegister(startDate, endDate);
+  async getGstSummary(startDate?: string, endDate?: string, companyId?: string) {
+    const register = await this.getSalesRegister(startDate, endDate, companyId);
 
     // GSTR-1 Table 4: B2B Invoices (registered customers with valid GSTIN)
     const b2bRows = register.rows.filter((r) => r.customerGstin && r.customerGstin !== 'UNREGISTERED');
@@ -171,10 +204,13 @@ export class ReportsService {
 
     // Table 12: HSN Summary
     const invoiceIds = register.rows.map((r) => r.id);
-    const lines = await this.prismaRead.invoiceLine.findMany({
-      where: { invoiceId: { in: invoiceIds } },
-      include: { item: true },
-    });
+    const lines =
+      invoiceIds.length === 0
+        ? []
+        : await this.prismaRead.invoiceLine.findMany({
+            where: { invoiceId: { in: invoiceIds } },
+            include: { item: true },
+          });
 
     const hsnMap = new Map<string, { hsnCode: string; description: string; uqc: string; totalQty: Decimal; taxableValue: Decimal; cgstAmount: Decimal; sgstAmount: Decimal; igstAmount: Decimal }>();
 
@@ -233,13 +269,12 @@ export class ReportsService {
   }
 
   // 4. Purchase Register
-  async getPurchaseRegister(startDate?: string, endDate?: string) {
-    const where: any = {};
-    if (startDate || endDate) {
-      where.purchaseDate = {};
-      if (startDate) where.purchaseDate.gte = new Date(startDate);
-      if (endDate) where.purchaseDate.lte = new Date(endDate);
-    }
+  async getPurchaseRegister(startDate?: string, endDate?: string, companyId?: string) {
+    const purchaseDate = this.buildDateFilter(startDate, endDate);
+    const where: any = {
+      ...(companyId ? { companyId } : {}),
+      ...(purchaseDate ? { purchaseDate } : {}),
+    };
 
     const purchases = await this.prismaRead.purchase.findMany({
       where,
@@ -272,32 +307,144 @@ export class ReportsService {
     };
   }
 
-  // 5. Stock Summary (Opening, Receipts, Issues, Closing, Value)
-  async getStockSummary(_startDate?: string, _endDate?: string) {
-    const items = await this.prismaRead.item.findMany({
-      include: {
-        stockBalances: true,
-      },
-      orderBy: [{ kind: 'asc' }, { name: 'asc' }],
-    });
+  // 5. Stock Summary (Opening, Receipts, Issues, Closing, Value; supports historical endDate cut-off)
+  async getStockSummary(startDate?: string, endDate?: string, companyId?: string) {
+    const startFilter = startDate ? this.buildDateFilter(startDate, undefined)?.gte : undefined;
+    const endFilter = endDate ? this.buildDateFilter(undefined, endDate)?.lte : undefined;
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const isHistorical = Boolean(endFilter && endFilter.getTime() < todayStart.getTime());
 
-    const rows = items.map((item) => {
-      const currentQty = item.stockBalances.reduce((sum, b) => sum.plus(toDecimal(b.qty)), ZERO_QTY);
-      const currentValue = item.stockBalances.reduce((sum, b) => sum.plus(toDecimal(b.value)), ZERO_MONEY);
+    // Compute per-item period flows (Opening < startDate, Receipts/Issues within [startDate, endDate])
+    const [openingAgg, periodAgg] = await Promise.all([
+      startFilter
+        ? this.prismaRead.stockLedger.groupBy({
+            by: ['itemId'],
+            where: {
+              ...(companyId ? { companyId } : {}),
+              txnAt: { lt: startFilter },
+            },
+            _sum: { qtyIn: true, qtyOut: true },
+          })
+        : Promise.resolve([]),
+      this.prismaRead.stockLedger.groupBy({
+        by: ['itemId'],
+        where: {
+          ...(companyId ? { companyId } : {}),
+          ...(startFilter || endFilter
+            ? {
+                txnAt: {
+                  ...(startFilter ? { gte: startFilter } : {}),
+                  ...(endFilter ? { lte: endFilter } : {}),
+                },
+              }
+            : {}),
+        },
+        _sum: { qtyIn: true, qtyOut: true },
+      }),
+    ]);
+
+    const openingByItem = new Map(
+      openingAgg.map((g) => [g.itemId, toDecimal(g._sum.qtyIn ?? 0).minus(toDecimal(g._sum.qtyOut ?? 0))]),
+    );
+    const receiptsByItem = new Map(
+      periodAgg.map((g) => [g.itemId, toDecimal(g._sum.qtyIn ?? 0)]),
+    );
+    const issuesByItem = new Map(
+      periodAgg.map((g) => [g.itemId, toDecimal(g._sum.qtyOut ?? 0)]),
+    );
+
+    const buildSummaryRow = (
+      item: { id: string; sku: string; name: string; kind: string; baseUom: string; reorderLevel: Decimal | null },
+      currentQty: Decimal,
+      currentValue: Decimal,
+    ) => {
       const wac = currentQty.isZero() ? ZERO_MONEY : currentValue.div(currentQty);
-
+      const openingQty = openingByItem.get(item.id) || ZERO_QTY;
+      const receiptsQty = receiptsByItem.get(item.id) || ZERO_QTY;
+      const issuesQty = issuesByItem.get(item.id) || ZERO_QTY;
       return {
         id: item.id,
         code: item.sku,
         name: item.name,
         kind: item.kind,
         uom: item.baseUom,
+        openingQty: openingQty.toFixed(4),
+        receiptsQty: receiptsQty.toFixed(4),
+        issuesQty: issuesQty.toFixed(4),
         currentQty: currentQty.toFixed(4),
         currentValue: currentValue.toFixed(2),
         wac: wac.toFixed(6),
         reorderLevel: item.reorderLevel ? toDecimal(item.reorderLevel).toFixed(2) : null,
         isBelowReorder: item.reorderLevel ? currentQty.lessThan(toDecimal(item.reorderLevel)) : false,
       };
+    };
+
+    if (isHistorical && endFilter) {
+      const [items, ledgerAgg, histTxns] = await Promise.all([
+        this.prismaRead.item.findMany({
+          where: companyId ? { companyId } : {},
+          orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+        }),
+        this.prismaRead.stockLedger.groupBy({
+          by: ['itemId'],
+          where: {
+            ...(companyId ? { companyId } : {}),
+            txnAt: { lte: endFilter },
+          },
+          _sum: {
+            qtyIn: true,
+            qtyOut: true,
+          },
+        }),
+        this.prismaRead.stockLedger.findMany({
+          where: {
+            ...(companyId ? { companyId } : {}),
+            txnAt: { lte: endFilter },
+          },
+          select: { itemId: true, qtyIn: true, qtyOut: true, value: true },
+        }),
+      ]);
+
+      const qtyByItem = new Map(
+        ledgerAgg.map((g) => [
+          g.itemId,
+          toDecimal(g._sum.qtyIn ?? 0).minus(toDecimal(g._sum.qtyOut ?? 0)),
+        ]),
+      );
+
+      const valByItem = new Map<string, Decimal>();
+      for (const t of histTxns) {
+        const prev = valByItem.get(t.itemId) || ZERO_MONEY;
+        const delta = toDecimal(t.qtyIn).greaterThan(0)
+          ? toDecimal(t.value)
+          : toDecimal(t.qtyOut).greaterThan(0)
+          ? toDecimal(t.value).negated()
+          : toDecimal(t.value);
+        valByItem.set(t.itemId, prev.plus(delta));
+      }
+
+      const rows = items.map((item) => {
+        const currentQty = qtyByItem.get(item.id) || ZERO_QTY;
+        const rawVal = valByItem.get(item.id) || ZERO_MONEY;
+        const currentValue = currentQty.lessThanOrEqualTo(0) ? ZERO_MONEY : rawVal;
+        return buildSummaryRow(item, currentQty, currentValue);
+      });
+
+      const totalValuation = rows.reduce((sum, r) => sum.plus(toDecimal(r.currentValue)), ZERO_MONEY);
+      return { totalItems: rows.length, totalValuation: totalValuation.toFixed(2), rows };
+    }
+
+    const items = await this.prismaRead.item.findMany({
+      where: companyId ? { companyId } : {},
+      include: { stockBalances: companyId ? { where: { companyId } } : true },
+      orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+    });
+
+    const rows = items.map((item) => {
+      const currentQty = (item.stockBalances || []).reduce((sum, b) => sum.plus(toDecimal(b.qty)), ZERO_QTY);
+      const currentValue = (item.stockBalances || []).reduce((sum, b) => sum.plus(toDecimal(b.value)), ZERO_MONEY);
+      return buildSummaryRow(item, currentQty, currentValue);
     });
 
     const totalValuation = rows.reduce((sum, r) => sum.plus(toDecimal(r.currentValue)), ZERO_MONEY);
@@ -310,14 +457,13 @@ export class ReportsService {
   }
 
   // 6. Stock Ledger
-  async getStockLedger(itemId?: string, startDate?: string, endDate?: string) {
-    const where: any = {};
-    if (itemId) where.itemId = itemId;
-    if (startDate || endDate) {
-      where.txnAt = {};
-      if (startDate) where.txnAt.gte = new Date(startDate);
-      if (endDate) where.txnAt.lte = new Date(endDate);
-    }
+  async getStockLedger(itemId?: string, startDate?: string, endDate?: string, companyId?: string) {
+    const txnAt = this.buildDateFilter(startDate, endDate);
+    const where: any = {
+      ...(companyId ? { companyId } : {}),
+      ...(itemId ? { itemId } : {}),
+      ...(txnAt ? { txnAt } : {}),
+    };
 
     const entries = await this.prismaRead.stockLedger.findMany({
       where,
@@ -352,20 +498,19 @@ export class ReportsService {
   }
 
   // 7. Production Report
-  async getProductionReport(startDate?: string, endDate?: string) {
-    const where: any = {};
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
-    }
+  async getProductionReport(startDate?: string, endDate?: string, companyId?: string) {
+    const createdAt = this.buildDateFilter(startDate, endDate);
+    const where: any = {
+      ...(companyId ? { companyId } : {}),
+      ...(createdAt ? { createdAt } : {}),
+    };
 
     const runs = await this.prismaRead.productionRun.findMany({
       where,
       include: {
         inputs: { include: { item: true } },
         outputs: { include: { fgItem: true, batch: true } },
-        wastages: true,
+        wastages: { include: { item: true } },
         overheads: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -384,12 +529,25 @@ export class ReportsService {
         const variance = planned > 0 ? ((actual - planned) / planned) * 100 : 0;
         return {
           item: inp.item.name,
+          uom: inp.uom,
           planned,
           actual,
           variancePct: Number(variance.toFixed(2)),
           isFlagged: inp.flagged || Math.abs(variance) > 3.0,
         };
       });
+
+      const wastageEntries = run.wastages.map((w) => ({
+        item: w.item.name,
+        qty: toDecimal(w.qty).toNumber(),
+        uom: w.uom,
+        reason: w.reason,
+      }));
+      const totalWastageQty = run.wastages.reduce((s, w) => s.plus(toDecimal(w.qty)), ZERO_QTY).toNumber();
+      const wastageSummary =
+        wastageEntries.length > 0
+          ? wastageEntries.map((w) => `${w.qty} ${w.uom} ${w.item} (${w.reason})`).join(', ')
+          : 'None';
 
       const totalMaterialCost = run.inputs.reduce(
         (sum, i) => sum.plus(toDecimal(i.value)),
@@ -411,7 +569,13 @@ export class ReportsService {
         actualYield,
         yieldVariancePct: Number(yieldVariance.toFixed(2)),
         isYieldFlagged,
+        wastages: wastageEntries,
+        totalWastageQty,
+        wastageSummary,
         inputConsumptions,
+        consumptionSummary: inputConsumptions
+          .map((ic) => `${ic.item}: ${ic.actual}/${ic.planned} ${ic.uom}`)
+          .join('; '),
         totalMaterialCost: totalMaterialCost.toFixed(2),
         totalOverheadCost: totalOverheadCost.toFixed(2),
         totalBatchCost: totalBatchCost.toFixed(2),
@@ -426,8 +590,8 @@ export class ReportsService {
   }
 
   // 8. Costing Comparison (WAC vs FIFO)
-  async getCostingComparison(startDate?: string, endDate?: string) {
-    const prodReport = await this.getProductionReport(startDate, endDate);
+  async getCostingComparison(startDate?: string, endDate?: string, companyId?: string) {
+    const prodReport = await this.getProductionReport(startDate, endDate, companyId);
 
     const rows = prodReport.rows.map((r) => {
       const wacUnitCost = toDecimal(r.unitCost);
@@ -457,13 +621,12 @@ export class ReportsService {
   }
 
   // 9. Collections Report
-  async getCollectionsReport(startDate?: string, endDate?: string) {
-    const where: any = {};
-    if (startDate || endDate) {
-      where.paymentDate = {};
-      if (startDate) where.paymentDate.gte = new Date(startDate);
-      if (endDate) where.paymentDate.lte = new Date(endDate);
-    }
+  async getCollectionsReport(startDate?: string, endDate?: string, companyId?: string) {
+    const paymentDate = this.buildDateFilter(startDate, endDate);
+    const where: any = {
+      ...(companyId ? { companyId } : {}),
+      ...(paymentDate ? { paymentDate } : {}),
+    };
 
     const payments = await this.prismaRead.payment.findMany({
       where,
@@ -497,17 +660,32 @@ export class ReportsService {
   }
 
   // 10. Outstanding with Ageing (0-30, 31-60, 61-90, 90+)
-  async getOutstandingAgeing() {
+  async getOutstandingAgeing(companyId?: string) {
     const customers = await this.prismaRead.party.findMany({
       where: {
+        ...(companyId ? { companyId } : {}),
         kind: { in: [PartyKind.CUSTOMER_RETAILER, PartyKind.CUSTOMER_DISTRIBUTOR] },
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        gstin: true,
+        stateCode: true,
         salesOrders: {
-          include: {
+          where: {
             invoices: {
-              include: {
-                paymentAllocations: true,
+              some: { status: InvoiceStatus.POSTED },
+            },
+          },
+          select: {
+            invoices: {
+              where: { status: InvoiceStatus.POSTED },
+              select: {
+                total: true,
+                createdAt: true,
+                paymentAllocations: {
+                  select: { amount: true },
+                },
               },
             },
           },
@@ -574,32 +752,43 @@ export class ReportsService {
     };
   }
 
+  private escapeXml(value: string | number | null | undefined): string {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
   // T4.4: Tally Prime XML Export (Sales & Receipt vouchers)
-  async getTallyXml(startDate?: string, endDate?: string): Promise<string> {
-    const register = await this.getSalesRegister(startDate, endDate);
-    const collections = await this.getCollectionsReport(startDate, endDate);
+  async getTallyXml(startDate?: string, endDate?: string, companyId?: string): Promise<string> {
+    const register = await this.getSalesRegister(startDate, endDate, companyId);
+    const collections = await this.getCollectionsReport(startDate, endDate, companyId);
 
     const voucherXmls: string[] = [];
 
     // Sales Vouchers
     for (const inv of register.rows) {
-      const dateFormatted = (inv.invoiceDate ?? '').replace(/-/g, '');
+      const dateFormatted = this.escapeXml((inv.invoiceDate ?? '').replace(/-/g, ''));
+      const invNum = this.escapeXml(inv.invoiceNumber);
+      const custName = this.escapeXml(inv.customerName);
       voucherXmls.push(`
         <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
           <DATE>${dateFormatted}</DATE>
           <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
-          <VOUCHERNUMBER>${inv.invoiceNumber}</VOUCHERNUMBER>
-          <PARTYLEDGERNAME>${inv.customerName}</PARTYLEDGERNAME>
+          <VOUCHERNUMBER>${invNum}</VOUCHERNUMBER>
+          <PARTYLEDGERNAME>${custName}</PARTYLEDGERNAME>
           <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
           <ALLLEDGERENTRIES.LIST>
-            <LEDGERNAME>${inv.customerName}</LEDGERNAME>
+            <LEDGERNAME>${custName}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${inv.grandTotal}</AMOUNT>
+            <AMOUNT>-${this.escapeXml(inv.grandTotal)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Sales Account</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${inv.taxableTotal}</AMOUNT>
+            <AMOUNT>${this.escapeXml(inv.taxableTotal)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
           ${
             toDecimal(inv.cgstTotal).greaterThan(0)
@@ -607,12 +796,12 @@ export class ReportsService {
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Output CGST</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${inv.cgstTotal}</AMOUNT>
+            <AMOUNT>${this.escapeXml(inv.cgstTotal)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Output SGST</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${inv.sgstTotal}</AMOUNT>
+            <AMOUNT>${this.escapeXml(inv.sgstTotal)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`
               : ''
           }
@@ -622,7 +811,7 @@ export class ReportsService {
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Output IGST</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${inv.igstTotal}</AMOUNT>
+            <AMOUNT>${this.escapeXml(inv.igstTotal)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`
               : ''
           }
@@ -631,22 +820,25 @@ export class ReportsService {
 
     // Receipt Vouchers
     for (const col of collections.rows) {
-      const dateFormatted = (col.paymentDate ?? '').replace(/-/g, '');
+      const dateFormatted = this.escapeXml((col.paymentDate ?? '').replace(/-/g, ''));
+      const payNum = this.escapeXml(col.paymentNumber);
+      const custName = this.escapeXml(col.customerName);
+      const amt = this.escapeXml(col.amount);
       voucherXmls.push(`
         <VOUCHER VCHTYPE="Receipt" ACTION="Create">
           <DATE>${dateFormatted}</DATE>
           <VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>
-          <VOUCHERNUMBER>${col.paymentNumber}</VOUCHERNUMBER>
-          <PARTYLEDGERNAME>${col.customerName}</PARTYLEDGERNAME>
+          <VOUCHERNUMBER>${payNum}</VOUCHERNUMBER>
+          <PARTYLEDGERNAME>${custName}</PARTYLEDGERNAME>
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>Bank Account / UPI</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${col.amount}</AMOUNT>
+            <AMOUNT>-${amt}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
           <ALLLEDGERENTRIES.LIST>
-            <LEDGERNAME>${col.customerName}</LEDGERNAME>
+            <LEDGERNAME>${custName}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${col.amount}</AMOUNT>
+            <AMOUNT>${amt}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
         </VOUCHER>`);
     }

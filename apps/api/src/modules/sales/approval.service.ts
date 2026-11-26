@@ -20,39 +20,48 @@ export class ApprovalService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async approveOrder(companyId: string, orderId: string, dto: ApproveOrderDto) {
-    const order = await this.prisma.salesOrder.findFirst({
-      where: { id: orderId, companyId },
-      include: {
-        lines: { include: { item: true, reservations: true } },
-        party: true,
-        company: true,
-      },
-    });
+    const fy = getFinancialYear();
 
-    if (!order) {
-      throw new NotFoundException(`Order '${orderId}' not found`);
-    }
+    return this.prisma.$transaction(async (tx) => {
+      // Lock the sales order row inside transaction so concurrent approvals serialize cleanly
+      const lockedOrder = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM sales_order WHERE id = ${orderId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedOrder.length === 0) {
+        throw new NotFoundException(`Order '${orderId}' not found`);
+      }
 
-    if (order.status !== OrderStatus.SUBMITTED && order.status !== OrderStatus.ON_HOLD) {
-      throw new BadRequestException(
-        `Cannot approve order in status '${order.status}'. Only SUBMITTED or ON_HOLD orders can be approved.`,
-      );
-    }
-
-    if (dto.action === 'HOLD') {
-      return this.prisma.salesOrder.update({
-        where: { id: orderId },
-        data: {
-          status: OrderStatus.ON_HOLD,
-          notes: dto.notes || order.notes,
+      const order = await tx.salesOrder.findFirst({
+        where: { id: orderId, companyId },
+        include: {
+          lines: { include: { item: true, reservations: true } },
+          party: true,
+          company: true,
         },
-        include: { lines: true, party: true },
       });
-    }
 
-    if (dto.action === 'REJECT') {
-      return this.prisma.$transaction(async (tx) => {
-        // Release reservations
+      if (!order) {
+        throw new NotFoundException(`Order '${orderId}' not found`);
+      }
+
+      if (order.status !== OrderStatus.SUBMITTED && order.status !== OrderStatus.ON_HOLD) {
+        throw new BadRequestException(
+          `Cannot approve order in status '${order.status}'. Only SUBMITTED or ON_HOLD orders can be approved.`,
+        );
+      }
+
+      if (dto.action === 'HOLD') {
+        return tx.salesOrder.update({
+          where: { id: orderId },
+          data: {
+            status: OrderStatus.ON_HOLD,
+            notes: dto.notes || order.notes,
+          },
+          include: { lines: true, party: true },
+        });
+      }
+
+      if (dto.action === 'REJECT') {
         await tx.stockReservation.deleteMany({
           where: {
             orderLineId: { in: order.lines.map((l) => l.id) },
@@ -67,53 +76,54 @@ export class ApprovalService {
           },
           include: { lines: true, party: true },
         });
-      });
-    }
-
-    if (dto.action === 'APPROVE_FULL') {
-      // Verify available stock for each line
-      for (const line of order.lines) {
-        const bal = await this.prisma.stockBalance.aggregate({
-          where: { itemId: line.itemId, companyId },
-          _sum: { qty: true },
-        });
-        const totalOnHand = toDecimal(bal._sum.qty || 0);
-
-        // Reservations by other orders
-        const otherRes = await this.prisma.stockReservation.aggregate({
-          where: {
-            itemId: line.itemId,
-            companyId,
-            orderLineId: { not: line.id },
-          },
-          _sum: { qty: true },
-        });
-        const reservedOther = toDecimal(otherRes._sum.qty || 0);
-        const available = totalOnHand.minus(reservedOther);
-
-        if (available.lessThan(toDecimal(line.qty))) {
-          throw new BadRequestException(
-            `Insufficient stock for item '${line.item.name}' (SKU: ${line.item.sku}). Available: ${available.toNumber()}, Required: ${line.qty.toNumber()}`,
-          );
-        }
       }
 
-      return this.prisma.salesOrder.update({
-        where: { id: orderId },
-        data: {
-          status: OrderStatus.APPROVED,
-          notes: dto.notes || order.notes,
-        },
-        include: { lines: true, party: true },
-      });
-    }
+      // Acquire deterministic sorted per-item advisory locks to prevent concurrent over-approval
+      const sortedItemIds = Array.from(new Set(order.lines.map((l) => l.itemId))).sort();
+      for (const itemId of sortedItemIds) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${itemId}:approval`}))`;
+      }
 
-    if (dto.action === 'APPROVE_AVAILABLE_BACKORDER') {
-      const isInterState = order.party.stateCode !== order.company.stateCode;
-      const fy = getFinancialYear();
+      if (dto.action === 'APPROVE_FULL') {
+        for (const line of order.lines) {
+          const bal = await tx.stockBalance.aggregate({
+            where: { itemId: line.itemId, companyId },
+            _sum: { qty: true },
+          });
+          const totalOnHand = toDecimal(bal._sum.qty || 0);
 
-      return this.prisma.$transaction(async (tx) => {
+          const otherRes = await tx.stockReservation.aggregate({
+            where: {
+              itemId: line.itemId,
+              companyId,
+              orderLineId: { not: line.id },
+            },
+            _sum: { qty: true },
+          });
+          const reservedOther = toDecimal(otherRes._sum.qty || 0);
+          const available = totalOnHand.minus(reservedOther);
+
+          if (available.lessThan(toDecimal(line.qty))) {
+            throw new BadRequestException(
+              `Insufficient stock for item '${line.item.name}' (SKU: ${line.item.sku}). Available: ${available.toNumber()}, Required: ${line.qty.toNumber()}`,
+            );
+          }
+        }
+
+        return tx.salesOrder.update({
+          where: { id: orderId },
+          data: {
+            status: OrderStatus.APPROVED,
+            notes: dto.notes || order.notes,
+          },
+          include: { lines: true, party: true },
+        });
+      }
+
+      if (dto.action === 'APPROVE_AVAILABLE_BACKORDER') {
+        const isInterState = order.party.stateCode !== order.company.stateCode;
         let hasShortage = false;
+        let totalApprovedQty = toDecimal(0);
         const backorderLines: Array<{
           itemId: string;
           qty: number;
@@ -160,9 +170,9 @@ export class ApprovalService {
           if (available.lessThan(orderedQty)) {
             hasShortage = true;
             const approvedQty = available.greaterThan(0) ? available : toDecimal(0);
+            totalApprovedQty = totalApprovedQty.plus(approvedQty);
             const shortageQty = orderedQty.minus(approvedQty);
 
-            // Recompute original line for approvedQty
             const approvedGst = computeLineGst({
               rate: line.rate.toNumber(),
               qty: approvedQty.toNumber(),
@@ -182,7 +192,6 @@ export class ApprovalService {
               },
             });
 
-            // Update reservation on this line to approvedQty
             await tx.stockReservation.updateMany({
               where: { orderLineId: line.id },
               data: { qty: approvedQty.toNumber() },
@@ -192,7 +201,6 @@ export class ApprovalService {
             updatedTaxTotal = updatedTaxTotal.plus(approvedGst.totalTax);
             updatedGrandTotal = updatedGrandTotal.plus(approvedGst.total);
 
-            // Backorder line for shortage
             const boGst = computeLineGst({
               rate: line.rate.toNumber(),
               qty: shortageQty.toNumber(),
@@ -213,9 +221,9 @@ export class ApprovalService {
               total: boGst.total,
             });
 
-            // Calculate suggested production batch
-            // Standard batch is 200 packets for Murukku
-            const suggestedCount = Math.ceil(shortageQty.toNumber() / 200);
+            const weightG = line.item?.netWeightG ? Number(line.item.netWeightG) : 200;
+            const packetsPerBatch = weightG > 0 ? Math.max(1, Math.round(40000 / weightG)) : 200;
+            const suggestedCount = Math.ceil(shortageQty.toNumber() / packetsPerBatch);
             suggestedBatches.push({
               itemId: line.itemId,
               itemSku: line.item.sku,
@@ -223,14 +231,19 @@ export class ApprovalService {
               suggestedBatchCount: suggestedCount,
             });
           } else {
-            // Full qty available for this line
+            totalApprovedQty = totalApprovedQty.plus(orderedQty);
             updatedTaxableTotal = updatedTaxableTotal.plus(line.taxable);
             updatedTaxTotal = updatedTaxTotal.plus(line.cgst).plus(line.sgst).plus(line.igst);
             updatedGrandTotal = updatedGrandTotal.plus(line.total);
           }
         }
 
-        // Update original order totals and status
+        if (totalApprovedQty.lessThanOrEqualTo(0)) {
+          throw new BadRequestException(
+            'No stock is currently available to fulfill any line on this order.',
+          );
+        }
+
         const approvedOrder = await tx.salesOrder.update({
           where: { id: orderId },
           data: {
@@ -243,7 +256,6 @@ export class ApprovalService {
           include: { lines: true, party: true },
         });
 
-        // Create backorder order if there was a shortage
         let backorderOrder = null;
         if (hasShortage && backorderLines.length > 0) {
           const boSeq = await tx.$queryRaw<Array<{ next_no: number }>>`
@@ -290,9 +302,9 @@ export class ApprovalService {
           backorder: backorderOrder,
           suggestedProductionBatches: suggestedBatches,
         };
-      });
-    }
+      }
 
-    throw new BadRequestException(`Unknown action '${(dto as any).action}'`);
+      throw new BadRequestException(`Unknown action '${(dto as any).action}'`);
+    });
   }
 }

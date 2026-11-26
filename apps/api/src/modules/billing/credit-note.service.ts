@@ -29,30 +29,38 @@ export class CreditNoteService {
     dto: CreateCreditNoteDto,
     createdBy?: string,
   ) {
-    const invoice = await this.prisma.invoice.findFirst({
-      where: { id: invoiceId, companyId },
-      include: {
-        lines: true,
-        dispatches: {
-          include: {
-            lines: true,
-          },
-        },
-        creditNotes: true,
-      },
-    });
-
-    if (!invoice) {
-      throw new NotFoundException(`Invoice '${invoiceId}' not found`);
-    }
-
-    if (invoice.status === InvoiceStatus.CANCELLED) {
-      throw new BadRequestException(`Invoice '${invoice.number}' has already been cancelled.`);
-    }
-
     const fy = getFinancialYear();
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock invoice row inside transaction so concurrent credit-note calls cannot double-restore stock
+      const lockedInv = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM invoice WHERE id = ${invoiceId}::uuid AND company_id = ${companyId}::uuid FOR UPDATE
+      `;
+      if (lockedInv.length === 0) {
+        throw new NotFoundException(`Invoice '${invoiceId}' not found`);
+      }
+
+      const invoice = await tx.invoice.findFirst({
+        where: { id: invoiceId, companyId },
+        include: {
+          lines: true,
+          dispatches: {
+            include: {
+              lines: true,
+            },
+          },
+          creditNotes: true,
+        },
+      });
+
+      if (!invoice) {
+        throw new NotFoundException(`Invoice '${invoiceId}' not found`);
+      }
+
+      if (invoice.status === InvoiceStatus.CANCELLED) {
+        throw new BadRequestException(`Invoice '${invoice.number}' has already been cancelled.`);
+      }
+
       // 1. Sequence allocation for CN
       const seq = await tx.$queryRaw<Array<{ next_no: number }>>`
         INSERT INTO document_sequence (id, company_id, doc_type, fy, next_no, updated_at)

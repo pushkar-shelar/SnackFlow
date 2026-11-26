@@ -57,8 +57,30 @@ export class Rfc7807ExceptionFilter implements ExceptionFilter {
         }
       }
     } else if (exception instanceof Error) {
-      this.logger.error(`Unhandled error [${traceId}]: ${exception.message}`, exception.stack);
-      detail = process.env.NODE_ENV === 'production' ? 'An unexpected internal error occurred' : exception.message;
+      const prismaCode = (exception as any)?.code as string | undefined;
+      if (prismaCode === 'P2002') {
+        status = HttpStatus.CONFLICT;
+        title = 'Conflict';
+        type = 'https://snackflow.local/errors/conflict';
+        detail = 'A record with these unique fields already exists.';
+      } else if (prismaCode === 'P2025') {
+        status = HttpStatus.NOT_FOUND;
+        title = 'NotFound';
+        type = 'https://snackflow.local/errors/not-found';
+        detail = 'Requested record was not found.';
+      } else if (
+        prismaCode === 'P2003' ||
+        prismaCode === 'P2023' ||
+        exception.name === 'PrismaClientValidationError'
+      ) {
+        status = HttpStatus.BAD_REQUEST;
+        title = 'BadRequest';
+        type = 'https://snackflow.local/errors/bad-request';
+        detail = 'Invalid identifier, query parameter, or request reference provided.';
+      } else {
+        this.logger.error(`Unhandled error [${traceId}]: ${exception.message}`, exception.stack);
+        detail = 'An unexpected internal error occurred';
+      }
     }
 
     const problem: ProblemDetails = {

@@ -56,15 +56,19 @@ export class InventoryService {
         mov.movementType === MovementType.DISPATCH ||
         mov.movementType === MovementType.WASTAGE;
 
-      // Fetch item definition to know cost method
+      // Fetch item definition and enforce tenant isolation
       const item = await tx.item.findUnique({
         where: { id: mov.itemId },
       });
-      if (!item) {
+      if (!item || item.companyId !== mov.companyId) {
         throw new BadRequestException(`Item '${mov.itemId}' not found in catalog`);
       }
 
-      // Lock the specific stock balance row with FOR UPDATE using raw query
+      // Acquire transaction-scoped advisory lock on (company, item, batch) to prevent duplicate NULL-batch rows
+      const lockKey = `${mov.companyId}:${mov.itemId}:${mov.batchId || ''}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+
+      // Lock or initialize the specific stock balance row
       let balance = await tx.stockBalance.findFirst({
         where: {
           companyId: mov.companyId,
@@ -199,40 +203,57 @@ export class InventoryService {
   }
 
   /**
-   * Reconciliation check: asserts balance == SUM(ledger) for every item & batch
+   * Reconciliation check: asserts balance == SUM(ledger) for every item & batch in 2 SQL queries (zero N+1)
    */
   async reconcileStock(companyId: string) {
-    const balances = await this.prisma.stockBalance.findMany({
-      where: { companyId },
-      include: { item: true, batch: true },
-    });
+    const [balances, ledgerSums] = await Promise.all([
+      this.prisma.stockBalance.findMany({
+        where: { companyId },
+        include: { item: true, batch: true },
+      }),
+      this.prisma.$queryRaw<
+        Array<{ item_id: string; batch_id: string | null; net_qty: any; net_value: any }>
+      >`
+        SELECT
+          item_id,
+          batch_id,
+          COALESCE(SUM(qty_in - qty_out), 0) AS net_qty,
+          COALESCE(SUM(CASE
+            WHEN qty_in > 0 THEN value
+            WHEN qty_out > 0 THEN -value
+            ELSE value END), 0) AS net_value
+        FROM stock_ledger
+        WHERE company_id = ${companyId}::uuid
+        GROUP BY item_id, batch_id
+      `,
+    ]);
+
+    const ledgerMap = new Map(
+      ledgerSums.map((row) => [`${row.item_id}:${row.batch_id || ''}`, row]),
+    );
 
     const discrepancies: any[] = [];
 
     for (const bal of balances) {
-      const sumResult: any[] = await this.prisma.$queryRaw`
-        SELECT 
-          COALESCE(SUM(qty_in - qty_out), 0) as net_qty,
-          COALESCE(SUM(CASE 
-            WHEN qty_in > 0 THEN value 
-            WHEN qty_out > 0 THEN -value 
-            ELSE value END), 0) as net_value
-        FROM stock_ledger
-        WHERE company_id = ${companyId}::uuid
-          AND item_id = ${bal.itemId}::uuid
-          AND ((${bal.batchId}::uuid IS NULL AND batch_id IS NULL) OR batch_id = ${bal.batchId}::uuid)
-      `;
-
-      const ledgerNetQty = toDecimal(sumResult[0]?.net_qty || 0);
+      const sumRow = ledgerMap.get(`${bal.itemId}:${bal.batchId || ''}`);
+      const ledgerNetQty = toDecimal(sumRow?.net_qty || 0);
       const balQty = toDecimal(bal.qty);
+      const ledgerNetVal = toDecimal(sumRow?.net_value || 0);
+      const balVal = toDecimal(bal.value);
 
-      if (!ledgerNetQty.equals(balQty)) {
+      const qtyMismatch = !ledgerNetQty.equals(balQty);
+      const valMismatch = ledgerNetVal.minus(balVal).abs().greaterThan(0.05);
+
+      if (qtyMismatch || valMismatch) {
         discrepancies.push({
           sku: bal.item.sku,
           batchNo: bal.batch?.batchNo || 'NO_BATCH',
           balanceQty: balQty.toString(),
           ledgerQty: ledgerNetQty.toString(),
           diff: balQty.minus(ledgerNetQty).toString(),
+          balanceValue: balVal.toFixed(2),
+          ledgerValue: ledgerNetVal.toFixed(2),
+          valueDiff: balVal.minus(ledgerNetVal).toFixed(2),
         });
       }
     }
